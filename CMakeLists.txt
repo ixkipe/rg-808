@@ -10,6 +10,7 @@ add_executable(rg808
     src/canvas.c
     src/samples.c
     src/wav.c
+    src/pattern.c
 )
 
 if (WIN32)

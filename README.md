@@ -2,7 +2,7 @@
 
 A 16-step, 11-track drum machine written in C with SDL2, packaged as a
 PortMaster "ready-to-run" port. Per-step accents, sample-accurate sequencing,
-pattern save, 640×480 native UI, D-pad driven.
+a 200-slot pattern library, 640×480 native UI, D-pad driven.
 
 > **Disclaimer: this project was made with AI.** All of the source code, build
 > and packaging tooling, documentation and planning in this repository were
@@ -32,11 +32,15 @@ build\rg808.exe               # run (SDL2 DLL + assets are copied next to it)
 ```
 Useful CLI modes (no audio device needed):
 ```
-rg808.exe --bounce out.wav --loops 4    # render current pattern to WAV
+rg808.exe --bounce out.wav --loops 4    # render the active pattern to WAV
+rg808.exe --pattern 12 --bounce out.wav # render pattern slot 12
+rg808.exe --pattern 1 --save-slot 7     # headless copy slot 1 -> 7
 rg808.exe --screenshot shot.bmp         # render one UI frame to BMP
+rg808.exe --screenshot p.bmp --mode pattern   # pattern browser frame
 ```
 Keyboard controls on PC: arrows=dpad, Z/Enter=A, X=B, C=X(hear), Space=START,
-Esc/Backspace=SELECT-menu, [/]=L/R tempo, Q=quit.
+Esc/Backspace=SELECT-menu, 1/2/3/4=L1/L2/R1/R2 (hold + arrows for shortcuts),
+[/]=tempo, Q=quit.
 
 ## Building for the device (muOS / PortMaster)
 Requires Docker Desktop (or any docker):
@@ -71,9 +75,23 @@ tools\device\probe.sh > probe.txt 2>&1     # in Mustard Terminal
 | B | Clear step (back in menus) |
 | X / Y | Hear sound of the selected track |
 | START | Play / stop |
-| SELECT | Menu (tempo, swing, ratchets, kits, save, load, clear all, quit) |
-| L / R | Tempo −5 / +5 |
-| L+R | Clear the whole track row |
+| SELECT | Menu (tempo, swing, ratchets, kits, save, pattern library, clear all, quit) |
+| L1 / L2 / R1 / R2 | Shoulder shortcuts — hold one and a D-pad hint appears |
+
+**Shoulder shortcuts**: hold a shoulder button and the UI shows a D-pad-shaped
+cheat sheet for that button. The assigned combinations are:
+
+| Hold + D-pad | Opens |
+|--|--|
+| L1 + Left | Tempo |
+| L1 + Right | Swing |
+| L2 + Left | Pattern library |
+| R1 + Left | Sample/kit selection |
+| R1 + Right | Ratchet notes |
+| R2 | reserved |
+
+Other combinations are reserved for future features (song mode, effects, …).
+Pressing a shoulder shows the hint; releasing it hides the hint immediately.
 
 **Swing**: menu → EDIT SWING; 0–100 % shuffles every even 16th late
 (~67 % ≈ triplet feel). **Ratchets**: menu → RATCHET NOTES turns the grid into
@@ -84,9 +102,20 @@ auditions, X auditions only, B returns. Each voice ships every matching
 variant from the pack (BD/SN: 16, toms: 7, CH: 5, OH: 3, CL: 2, CP: 3, CB: 2,
 CY: 6). All selections are saved with the pattern.
 
+**Pattern library**: menu → PATTERN LIBRARY opens 200 numbered slots.
+D-Pad up/down moves, left/right pages by 12, A loads the selected
+slot, B returns. SELECT opens the slot actions: LOAD SLOT, SAVE HERE
+(overwrite with the current editor), COPY ACTIVE HERE, RENAME (letter picker:
+up/down changes the character, left/right moves, A advances, X deletes,
+SELECT saves), DELETE and CANCEL. The active slot number and name are shown
+in the header; edits autosave into that slot. A legacy `conf/pattern.txt`
+from v1 is imported into slot 001 on first run.
+
 Your pattern and tempo are saved automatically on quit (menu: QUIT) and can be
-saved/loaded manually. The file lives in `conf/pattern.txt` inside the port
-folder on the card.
+saved/loaded manually. Patterns live in `conf/patterns/NNN.txt`, with slot
+names and the active slot in `conf/patterns/index.txt` inside the port folder
+on the card. Writes go to a temp file, are flushed, then renamed into place,
+so an interrupted save never truncates a pattern.
 
 ## Kit mapping
 Each voice ships its whole variant family from the pack as `<id>NN.wav`
@@ -95,10 +124,11 @@ Each voice ships its whole variant family from the pack as `<id>NN.wav`
 the `dflt` column in `src/engine.c`.
 
 ## Status / roadmap
-- v1 (this): single pattern, 11 tracks, accents, sample selection per voice
+- v1: single pattern, 11 tracks, accents, sample selection per voice
   (kit mode), save.
-- v2 ideas: per-track volume/mute, multiple patterns, machine-feel BD accent
-  decay, master volume UI, pattern chain.
+- v2 (in progress): swing + ratchets (M6), 200-slot pattern library with
+  rename/copy/delete and legacy import (M7), shoulder shortcut layer.
+  Next: song mode, effects, per-track volume/mute.
 
 ## Credits & licences
 Code: this project (MIT where not otherwise noted). SDL2 (zlib), public-domain

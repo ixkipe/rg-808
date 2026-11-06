@@ -2,8 +2,8 @@
 
 A Roland TR-808 clone for PortMaster handhelds: a 16-step, 11-track drum
 machine with per-step accents, sample-accurate sequencing, one-tap sample
-selection per voice (kit mode), and pattern save, written in C with SDL2.
-Runs natively at 640x480.
+selection per voice (kit mode), and a 200-slot pattern library, written in C
+with SDL2. Runs natively at 640x480.
 
 > **Disclaimer: this project was made with AI.** All of the source code, build
 > and packaging tooling, documentation and planning in this repository were
@@ -26,9 +26,14 @@ packaging conventions.
 | B | Clear step (back in menus) |
 | X or Y | Hear selected voice |
 | START | Play / stop |
-| SELECT | Menu (tempo, swing, ratchets, kits, save, load, clear, quit) |
-| L / R | Tempo -5 / +5 |
-| L+R | Clear current track row |
+| SELECT | Menu (tempo, swing, ratchets, kits, save, pattern library, clear, quit) |
+| L1 / L2 / R1 / R2 | Shoulder shortcuts (hold; on-screen D-pad shows each direction) |
+
+Shoulder shortcuts (hold + D-pad):
+L1+Left = tempo, L1+Right = swing, L2+Left = pattern library,
+R1+Left = sample/kit selection, R1+Right = ratchet notes. R2 and the other
+combinations are reserved for future features. Pressing a shoulder shows the
+D-pad hint overlay; releasing it hides the overlay immediately.
 
 Swing (menu -> EDIT SWING) shuffles every even 16th, 0-100%. Ratchet notes
 (menu -> RATCHET NOTES) turn any step into a 2x / 3x / 4x roll or a flam;
@@ -36,6 +41,12 @@ A cycles the mode, the cell shows its digit. Kit mode (menu -> SELECT KITS):
 each row is an instrument, the numbered columns are that instrument's
 sample variants. A picks and auditions, X auditions, B returns. All picks
 are saved with the pattern.
+
+Pattern library (menu -> PATTERN LIBRARY): 200 numbered slots. D-Pad selects,
+left/right pages, A loads, B returns; SELECT opens save/copy/rename/delete.
+The header shows the active slot, and edits autosave into it. Patterns are
+stored in `conf/patterns/` with an `index.txt`; a v1 `conf/pattern.txt` is
+imported into slot 001 on first launch.
 
 ## Compile
 

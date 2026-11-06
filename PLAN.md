@@ -87,15 +87,21 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
     uninitialized pad bytes in the WAV header made `--bounce` files
     non-deterministic (only affects export tooling, not live playback).
   - [ ] Device CPU spot-check at 250 BPM with 4× rolls on all 11 tracks.
-- [ ] **M7 — Pattern library** *(todo: save up to 200 patterns)*
-  - Storage: `conf/patterns/NNN.txt` (same file format per pattern) + `index.txt`
-    (slot → name); atomic writes (temp + rename) against SD power-loss.
-  - Import migration of the legacy single `pattern.txt` into slot 001 on first run.
-  - UI: PATTERN browser — numbered grid/list with names; load (A), overwrite-save
-    current (menu), delete/copy, D-pad letter-picker rename (optional if fiddly).
-  - Autosave retargets to the active slot; slot number shown in header.
-  - Risks/acceptance: 200 × tiny files (negligible), browse-edit-save-reload
-    round-trip test, crash-safety (never lose the last edit beyond ~5 s).
+- [x] **M7 — Pattern library** *(todo: save up to 200 patterns)*
+  - [x] Storage: `conf/patterns/NNN.txt` (same file format per pattern) +
+    `conf/patterns/index.txt` (slot → name, plus the active slot); atomic
+    writes (temp + fsync + rename) against SD power-loss.
+  - [x] Import migration of the legacy single `pattern.txt` into slot 001 on
+    first run (only when the library has no pattern files; later edits to the
+    legacy file never overwrite slot 001).
+  - [x] UI: PATTERN browser — numbered list with names, 12 slots/page;
+    load (A), SELECT actions (SAVE HERE, COPY ACTIVE HERE, RENAME, DELETE),
+    D-pad letter-picker rename (16 chars), active-slot marker in the header.
+  - [x] Autosave retargets to the active slot; slot number + name shown in
+    the header.
+  - [x] Verified by `tools/test-m7.ps1` (migration, no re-import, save/reload
+    bit-identical, index active/name, no `.tmp` leftovers) plus browser and
+    rename screenshots; existing M6/kit/round-trip tests still pass.
 - [ ] **M8 — Song mode** *(todo: chain up to 512 patterns; save song as WAV) — requires M7*
   - Song data: ordered chain of pattern slots (1 bar per entry, up to 512 entries);
     per-pattern BPM applies on each switch (bpm lives with the pattern, as today).
@@ -137,6 +143,15 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
 - M6 shipped (PC): global swing + per-step ratchets (2/3/4 rolls, flam) with
   RATCHET/SWING editor modes, persisted via `RCH`/`SWING` lines; WAV export
   header determinism bug fixed. Device retest needed (dpad fix + M6).
+- M7 shipped (PC + cross-build): 200-slot pattern library (`conf/patterns/`),
+  index with names/active slot, atomic writes, legacy import, browser +
+  action menu + letter-picker rename; autosave targets the active slot.
+- Shoulder shortcut layer (post-M7): L1+Left tempo, L1+Right swing,
+  L2+Left pattern library, R1+Left kit selection, R1+Right ratchets; R2 and
+  the remaining combinations reserved. Pressing any shoulder shows a
+  D-pad-shaped hint overlay. L1/R1 no longer change tempo directly.
+  Verified by `tools/test-shortcuts.ps1` (headless mapping test) plus
+  `--mode l1|l2|r1|r2` hint screenshots.
 - **First real-device session (2026-11-06): the port boots and runs on the SP.**
   Only issue found: D-pad double-fire (fixed in `src/main.c`, rebuilt zip —
   awaiting on-device retest).
@@ -165,3 +180,9 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
    SELECT, L/R) all correct? If clean → swap in a device screenshot, refresh the
    zip, and M3/M5 can close.
 4. Then pick the v2 entry point (proposal: M3 validation → M6 → M7 → M8; M9 anytime).
+   M6/M7 are done on PC; M8 (song mode) is next, and the device still needs the
+   M6/M7 control pass (pattern browser + rename with the real D-pad).
+5. Device: check the shoulder shortcut layer — L1/L2/R1/R2 hint overlay and the
+   L1+Left/Right, L2+Left and R1+Left/Right mappings. L2/R2 are read from SDL's
+   trigger axes (and raw joystick axes 4/5); R2 currently only shows the reserved
+   hint. If the SP maps them differently, pin it from the device's gamecontrollerdb.

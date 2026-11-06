@@ -3,7 +3,7 @@
   <game>
     <path>./RG808.sh</path>
     <name>RG808</name>
-    <desc>A Roland TR-808 style drum machine for your handheld: 16-step sequencer with 11 classic voices, per-step accents, sample-accurate timing and pattern save.</desc>
+    <desc>A Roland TR-808 style drum machine for your handheld: 16-step sequencer with 11 classic voices, per-step accents, sample-accurate timing, swing/ratchets and a 200-slot pattern library.</desc>
     <releasedate>20261106T000000</releasedate>
     <developer>vistor</developer>
     <publisher>Open Source</publisher>

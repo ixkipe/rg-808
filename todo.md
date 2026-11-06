@@ -5,7 +5,6 @@
   - flanger/phaser (either/or)
   - delay
   - reverb
-- save up to 200 patterns
 - song mode
   - chain up to 512 patterns
   - save song as WAV
