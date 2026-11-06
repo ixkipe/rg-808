@@ -163,12 +163,12 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
 - M7 shipped (PC + cross-build): 200-slot pattern library (`conf/patterns/`),
   index with names/active slot, atomic writes, legacy import, browser +
   action menu + letter-picker rename; autosave targets the active slot.
-- Shoulder shortcut layer (post-M7): L1+Left tempo, L1+Right swing,
-  L2+Left pattern library, R1+Left kit selection, R1+Right ratchets; R2 and
-  the remaining combinations reserved. Pressing any shoulder shows a
-  D-pad-shaped hint overlay. L1/R1 no longer change tempo directly.
-  Verified by `tools/test-shortcuts.ps1` (headless mapping test) plus
-  `--mode l1|l2|r1|r2` hint screenshots.
+- Shoulder shortcut layer (post-M7): L1+Left tempo, L1+Right swing, L1+Up
+  pattern length, L2+Left pattern library, L2+Right song mode, R1+Left kit
+  selection, R1+Right ratchets; R2 and the remaining combinations reserved.
+  Pressing any shoulder shows a D-pad-shaped hint overlay. L1/R1 no longer
+  change tempo directly. Verified by `tools/test-shortcuts.ps1` (headless
+  mapping test) plus `--mode l1|l2|r1|r2` hint screenshots.
 - M8 shipped (PC + cross-build): 512-bar song chains (`conf/song.txt`),
   immutable double-buffered snapshot sets, per-bar BPM/swing/kit, song page
   with picker/insert/delete/move/play-from-here/loop/jump, streaming
@@ -209,9 +209,10 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
 4. Then pick the v2 entry point (proposal: M3 validation → M6 → M7 → M8; M9 anytime).
    M6/M7/M8/M8.5 are done on PC; M9 (effects) is next, and the device still needs the
    M6/M7/M8/M8.5 control pass (pattern browser, song page and export, pattern length).
-5. Device: check the shoulder shortcut layer — L1/L2/R1/R2 hint overlay and the
-   L1+Left/Right/Up, L2+Left and R1+Left/Right mappings. L2/R2 are read from SDL's
-   trigger axes (and raw joystick axes 4/5); R2 currently only shows the reserved
-   hint. If the SP maps them differently, pin it from the device's gamecontrollerdb.
+5. Device: check the shoulder shortcut layer - L1/L2/R1/R2 hint overlay and the
+   L1+Left/Right/Up, L2+Left/Right and R1+Left/Right mappings. L2/R2 are read
+   from SDL's trigger axes (and raw joystick axes 4/5); R2 currently only shows
+   the reserved hint. If the SP maps them differently, pin it from the device's
+   gamecontrollerdb.
 6. Device: play a short song chain and run EXPORT WAV; confirm gapless bar
    switches, per-bar tempo changes and that `conf/song.wav` plays back cleanly.

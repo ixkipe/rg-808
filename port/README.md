@@ -31,7 +31,8 @@ packaging conventions.
 
 Shoulder shortcuts (hold + D-pad):
 L1+Left = tempo, L1+Right = swing, L1+Up = pattern length,
-L2+Left = pattern library, R1+Left = sample/kit selection,
+L2+Left = pattern library, L2+Right = song mode,
+R1+Left = sample/kit selection,
 R1+Right = ratchet notes. R2 and the other combinations are reserved for
 future features. Pressing a shoulder shows the D-pad hint overlay; releasing
 it hides the overlay immediately.
@@ -51,12 +52,12 @@ The header shows the active slot, and edits autosave into it. Patterns are
 stored in `conf/patterns/` with an `index.txt`; a v1 `conf/pattern.txt` is
 imported into slot 001 on first launch.
 
-Song mode (menu -> SONG MODE): chain up to 512 bars of pattern slots. A picks
-the pattern for a bar, X jumps to the playing bar, START plays/stops, SELECT
-opens insert/delete/move, play-from-here, loop, export WAV, save and clear.
-Each bar keeps its pattern's BPM/swing/length/kit. EXPORT WAV writes `conf/song.wav`
-(44.1 kHz/16-bit stereo) with a progress bar; the chain lives in
-`conf/song.txt`.
+Song mode (menu -> SONG MODE, or L2+Right): chain up to 512 bars of pattern
+slots. A picks the pattern for a bar, X jumps to the playing bar, START
+plays/stops, SELECT opens insert/delete/move, play-from-here, loop, export
+WAV, save and clear. Each bar keeps its pattern's BPM/swing/length/kit.
+EXPORT WAV writes `conf/song.wav` (44.1 kHz/16-bit stereo) with a progress
+bar; the chain lives in `conf/song.txt`.
 
 ## Compile
 

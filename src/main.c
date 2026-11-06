@@ -283,6 +283,7 @@ static const char *shortcut_label(int sh, int ad)
         break;
     case SH_L2:
         if (ad == ACT_LEFT) return "PATTERN LIBRARY";
+        if (ad == ACT_RIGHT) return "SONG MODE";
         break;
     case SH_R1:
         if (ad == ACT_LEFT) return "SAMPLE KIT";
@@ -1035,6 +1036,14 @@ static int song_save_now(App *a)
     return rc;
 }
 
+static void open_song_mode(App *a)
+{
+    stop_playback(a);
+    a->mode = MODE_SONG;
+    a->song_sel = 0;
+    if (a->song.count == 0) set_msg(a, "SONG EMPTY - SELECT:ACTIONS");
+}
+
 /* Stream the song to a PCM16 WAV, writing chunks straight to disk. */
 static int render_song_wav(App *a, SongSet *set, const char *path, int show_progress)
 {
@@ -1365,10 +1374,7 @@ static void do_menu(App *a, int item)
         a->pat_sel = a->lib.active_slot;
         break;
     case 7:
-        stop_playback(a);
-        a->mode = MODE_SONG;
-        a->song_sel = 0;
-        if (a->song.count == 0) set_msg(a, "SONG EMPTY - SELECT:ACTIONS");
+        open_song_mode(a);
         break;
     case 8:
         for (int t = 0; t < N_TRACKS; t++)
@@ -1874,6 +1880,10 @@ static int shortcut_activate(App *a, int sh, int ad)
             a->pat_sel = a->lib.active_slot;
             return 1;
         }
+        if (ad == ACT_RIGHT) {
+            open_song_mode(a);
+            return 1;
+        }
         break;
     case SH_R1:
         if (ad == ACT_LEFT) {
@@ -1963,6 +1973,13 @@ static int test_shortcuts_run(App *a)
     a->sh_suppress = 0;
 
     a->mode = MODE_EDIT;
+    handle_shoulder(a, SH_L2, 1);
+    input_dir(a, ACT_RIGHT);
+    CHECK(a->mode == MODE_SONG, "L2+Right opens song mode");
+    handle_shoulder(a, SH_L2, 0);
+    a->sh_suppress = 0;
+
+    a->mode = MODE_EDIT;
     handle_shoulder(a, SH_R1, 1);
     input_dir(a, ACT_LEFT);
     CHECK(a->mode == MODE_KIT, "R1+Left opens sample selection");
@@ -1997,6 +2014,15 @@ static int test_shortcuts_run(App *a)
     CHECK(a->sh_held[SH_L2], "L2 trigger axis registers as held");
     input_dir(a, ACT_LEFT);
     CHECK(a->mode == MODE_PATTERN, "L2 trigger axis + Left opens pattern library");
+    handle_trigger_axis(a, SH_L2, 0);
+    a->sh_suppress = 0;
+
+    a->mode = MODE_EDIT;
+    a->sh_held[SH_L2] = 0;
+    a->sh_suppress = 0;
+    handle_trigger_axis(a, SH_L2, 20000);
+    input_dir(a, ACT_RIGHT);
+    CHECK(a->mode == MODE_SONG, "L2 trigger axis + Right opens song mode");
     handle_trigger_axis(a, SH_L2, 0);
     a->sh_suppress = 0;
 

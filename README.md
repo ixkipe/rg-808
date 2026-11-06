@@ -92,6 +92,7 @@ cheat sheet for that button. The assigned combinations are:
 | L1 + Right | Swing |
 | L1 + Up | Pattern length |
 | L2 + Left | Pattern library |
+| L2 + Right | Song mode |
 | R1 + Left | Sample/kit selection |
 | R1 + Right | Ratchet notes |
 | R2 | reserved |
@@ -122,13 +123,14 @@ SELECT saves), DELETE and CANCEL. The active slot number and name are shown
 in the header; edits autosave into that slot. A legacy `conf/pattern.txt`
 from v1 is imported into slot 001 on first run.
 
-**Song mode**: menu → SONG MODE chains up to 512 bars, one pattern slot per
-bar. A picks the pattern for the selected bar (the pattern browser opens in
-pick mode), D-Pad up/down selects, left/right pages by 12, X jumps the cursor
-to the bar currently playing, and START plays/stops the chain. SELECT opens
-the song actions: INSERT BAR, DELETE BAR, MOVE BAR UP/DOWN, PLAY FROM HERE,
-LOOP ON/OFF, EXPORT WAV, SAVE SONG, CLEAR SONG and CANCEL. Each bar uses the
-BPM, swing, length, ratchets and kit stored in its pattern. The chain is saved in
+**Song mode**: menu → SONG MODE (or L2+Right) chains up to 512 bars, one
+pattern slot per bar. A picks the pattern for the selected bar (the pattern
+browser opens in pick mode), D-Pad up/down selects, left/right pages by 12,
+X jumps the cursor to the bar currently playing, and START plays/stops the
+chain. SELECT opens the song actions: INSERT BAR, DELETE BAR, MOVE BAR
+UP/DOWN, PLAY FROM HERE, LOOP ON/OFF, EXPORT WAV, SAVE SONG, CLEAR SONG and
+CANCEL. Each bar uses the BPM, swing, length, ratchets and kit stored in its
+pattern. The chain is saved in
 `conf/song.txt`; EXPORT WAV streams the whole song to `conf/song.wav` with a
 progress bar (44.1 kHz/16-bit stereo, one pass plus a two-second tail).
 
