@@ -64,22 +64,31 @@ tools\device\probe.sh > probe.txt 2>&1     # in Mustard Terminal
 | B | Clear step (back in menus) |
 | X / Y | Hear sound of the selected track |
 | START | Play / stop |
-| SELECT | Menu (tempo, save, load, clear all, quit) |
+| SELECT | Menu (tempo, kits, save, load, clear all, quit) |
 | L / R | Tempo −5 / +5 |
 | L+R | Clear the whole track row |
+
+In **kit mode** (menu → SELECT KITS): D-Pad rows = instruments, columns =
+sample variants (numbered boxes); A selects + auditions, X auditions only,
+B returns. Each voice ships every matching variant from the pack
+(BD/SN: 16, toms: 7, CH: 5, OH: 3, CL: 2, CP: 3, CB: 2, CY: 6).
+Selections are saved with the pattern.
 
 Your pattern and tempo are saved automatically on quit (menu: QUIT) and can be
 saved/loaded manually. The file lives in `conf/pattern.txt` inside the port
 folder on the card.
 
 ## Kit mapping
-The 11 slots (BD SD LT MT HT CH OH CL CP CB CY) are renamed copies of pack
-files — reassign any of them in `tools/prepare-assets.ps1`.
+Each voice ships its whole variant family from the pack as `<id>NN.wav`
+(e.g. `bd01..bd16` = TR-808Kick01..16). Edit the `$families` arrays in
+`tools/prepare-assets.ps1` to add, remove, or reorder variants; defaults are
+the `dflt` column in `src/engine.c`.
 
 ## Status / roadmap
-- v1 (this): single pattern, 11 tracks, accents, BPM 4–250, save.
-- v2 ideas: kit selection per track, per-track volume/mute, multiple patterns,
-  machine-feel BD accent decay, master volume UI, pattern chain.
+- v1 (this): single pattern, 11 tracks, accents, sample selection per voice
+  (kit mode), save.
+- v2 ideas: per-track volume/mute, multiple patterns, machine-feel BD accent
+  decay, master volume UI, pattern chain.
 
 ## Credits & licences
 Code: this project (MIT where not otherwise noted). SDL2 (zlib), public-domain

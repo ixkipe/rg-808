@@ -1,20 +1,20 @@
 #include "engine.h"
-#include <math.h>
+#include "samples.h"
 #include <string.h>
 
-/* Curated 808 kit, mapped from the sample pack. Colors evoke the TR-808 panel. */
+/* Curated 808 kit families, mapped from the sample pack. Colors evoke the TR-808 panel. */
 const TrackInfo TRACKS[N_TRACKS] = {
-    { "bd", "BD", "BASS DRUM",  0xD94F3B, 1.00f },
-    { "sd", "SD", "SNARE",      0xE08A2E, 0.85f },
-    { "lt", "LT", "LOW TOM",    0xD8B62C, 0.80f },
-    { "mt", "MT", "MID TOM",    0x9CC832, 0.75f },
-    { "ht", "HT", "HIGH TOM",   0x3FA93C, 0.70f },
-    { "ch", "CH", "CLOSED HAT", 0x2FA3A0, 0.50f },
-    { "oh", "OH", "OPEN HAT",   0x3579C8, 0.50f },
-    { "cl", "CL", "CLAVE",      0x7A4FC0, 0.65f },
-    { "cp", "CP", "HAND CLAP",  0xC24F8A, 0.60f },
-    { "cb", "CB", "COWBELL",    0xB0A03C, 0.45f },
-    { "cy", "CY", "CYMBAL",     0x8A8F98, 0.40f },
+    { "bd", "BD", "BASS DRUM",  0xD94F3B, 1.00f,  7 },
+    { "sd", "SD", "SNARE",      0xE08A2E, 0.85f,  1 },
+    { "lt", "LT", "LOW TOM",    0xD8B62C, 0.80f,  1 },
+    { "mt", "MT", "MID TOM",    0x9CC832, 0.75f,  4 },
+    { "ht", "HT", "HIGH TOM",   0x3FA93C, 0.70f,  6 },
+    { "ch", "CH", "CLOSED HAT", 0x2FA3A0, 0.50f,  1 },
+    { "oh", "OH", "OPEN HAT",   0x3579C8, 0.50f,  1 },
+    { "cl", "CL", "CLAVE",      0x7A4FC0, 0.65f,  1 },
+    { "cp", "CP", "HAND CLAP",  0xC24F8A, 0.60f,  1 },
+    { "cb", "CB", "COWBELL",    0xB0A03C, 0.45f,  1 },
+    { "cy", "CY", "CYMBAL",     0x8A8F98, 0.40f,  6 },
 };
 
 static const float LVL_GAIN[3] = { 0.0f, 0.72f, 1.0f };
@@ -35,6 +35,7 @@ void engine_init(Engine *e, int rate)
     e->cur_step = -1;
     e->bpm_x100 = 12000;
     e->next_step = 0;
+    for (int t = 0; t < N_TRACKS; t++) e->kit[t] = TRACKS[t].dflt - 1;
 }
 
 /* Steal the oldest voice, preferring the same track. */
@@ -55,13 +56,10 @@ static Voice *alloc_voice(Engine *e, int track)
     return best;
 }
 
-/* Externally provided by samples.c */
-extern const float *sample_data(const char *id, int *len);
-
-static void fire_one(Engine *e, int track, float level_gain, int delay)
+static void fire(Engine *e, int track, int variant, float level_gain, int delay)
 {
     int len;
-    const float *data = sample_data(TRACKS[track].id, &len);
+    const float *data = sample_get(track, variant, &len);
     if (!data) return;
     Voice *v = alloc_voice(e, track);
     v->data = data; v->len = len; v->pos = 0;
@@ -71,10 +69,13 @@ static void fire_one(Engine *e, int track, float level_gain, int delay)
     e->voice_fire[v - e->voices] = e->total_pos;
 }
 
-/* Play a single track now (preview); consumed by audio callback. */
-void engine_preview(Engine *e, int track)
+/* Play one track/variant now (preview); consumed by audio callback. */
+void engine_preview(Engine *e, int track, int variant)
 {
-    if (track >= 0 && track < N_TRACKS) e->preview_track = track + 1;
+    if (track >= 0 && track < N_TRACKS) {
+        e->preview_variant = variant;
+        e->preview_track = track + 1;
+    }
 }
 
 void engine_restart(Engine *e)
@@ -88,7 +89,7 @@ void engine_fire_step(Engine *e, int step)
     for (int t = 0; t < N_TRACKS; t++) {
         unsigned char lv = e->lvl[t][step];
         if (lv > LVL_OFF)
-            fire_one(e, t, LVL_GAIN[lv], 0);
+            fire(e, t, e->kit[t], LVL_GAIN[lv], 0);
     }
 }
 
@@ -98,8 +99,9 @@ void engine_mix(Engine *e, float *dst, int frames)
 
     if (e->preview_track) {
         int t = e->preview_track - 1;
+        int v = e->preview_variant;
         e->preview_track = 0;
-        if (t >= 0 && t < N_TRACKS) fire_one(e, t, LVL_GAIN[LVL_ACC], 0);
+        if (t >= 0 && t < N_TRACKS) fire(e, t, v, LVL_GAIN[LVL_ACC], 0);
     }
 
     if (e->playing) {
@@ -111,7 +113,7 @@ void engine_mix(Engine *e, float *dst, int frames)
             e->step = (e->step + 1) % N_STEPS;
             for (int t = 0; t < N_TRACKS; t++) {
                 unsigned char lv = e->lvl[t][e->step];
-                if (lv > LVL_OFF) fire_one(e, t, LVL_GAIN[lv], at);
+                if (lv > LVL_OFF) fire(e, t, e->kit[t], LVL_GAIN[lv], at);
             }
             e->next_step += sps;
         }

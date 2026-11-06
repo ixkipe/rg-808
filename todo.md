@@ -1,0 +1,9 @@
+- ratchet notes (1/2, 1/3, 1/4, flam)
+- effects
+  - compression/overdrive/distortion
+  - delay
+  - reverb
+- save up to 200 patterns
+- song mode
+  - chain up to 512 patterns
+  - save song as WAV

@@ -1,8 +1,9 @@
 # RG808
 
 A Roland TR-808 clone for PortMaster handhelds: a 16-step, 11-track drum
-machine with per-step accents, sample-accurate sequencing and pattern save,
-written in C with SDL2. Runs natively at 640x480.
+machine with per-step accents, sample-accurate sequencing, one-tap sample
+selection per voice (kit mode), and pattern save, written in C with SDL2.
+Runs natively at 640x480.
 
 ## Notes
 
@@ -15,12 +16,16 @@ packaging conventions.
 |--|--|
 | D-Pad | Move cursor |
 | A | Cycle step: off / on / accent |
-| B | Clear step |
+| B | Clear step (back in menus) |
 | X or Y | Hear selected voice |
 | START | Play / stop |
-| SELECT | Menu (tempo, save, load, clear, quit) |
+| SELECT | Menu (tempo, kits, save, load, clear, quit) |
 | L / R | Tempo -5 / +5 |
 | L+R | Clear current track row |
+
+Kit mode (menu -> SELECT KITS): each row is an instrument, the numbered
+columns are that instrument's sample variants. A picks and auditions, X
+auditions, B returns. Pick is saved with the pattern.
 
 ## Compile
 

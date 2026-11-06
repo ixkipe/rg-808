@@ -1,8 +1,12 @@
-/* Loads the curated kit into float mono buffers at the active sample rate. */
+/* Loads the kit families: <id>NN.wav (NN=01..MAX_VARIANTS) into float mono
+ * buffers at the active sample rate. First missing number ends the family. */
 #ifndef RG808_SAMPLES_H
 #define RG808_SAMPLES_H
 
-int samples_load_all(const char *dir, int rate);   /* returns missing count */
-const float *sample_data(const char *id, int *len);
+#include "engine.h"
+
+int samples_load_all(const char *dir, int rate);        /* returns #tracks w/o samples */
+int variant_count(int track);                            /* 0..MAX_VARIANTS */
+const float *sample_get(int track, int variant, int *len); /* clamps variant; NULL if none */
 
 #endif

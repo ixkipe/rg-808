@@ -34,6 +34,7 @@ cp port/README.md dist/build/rg808/
 chmod +x dist/build/RG808.sh dist/build/rg808/rg808.*
 
 cd dist/build
+rm -f ../rg808.zip
 zip -r ../rg808.zip RG808.sh rg808 > /dev/null
 cd ..
 echo "== done: dist/rg808.zip =="

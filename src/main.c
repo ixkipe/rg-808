@@ -27,7 +27,7 @@
 #define COL_PITCH (CELL_W + 4)          /* 34 */
 #define ROW_PITCH (CELL_H + 6)          /* 36 */
 
-enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO };
+enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_KIT };
 
 enum Action {
     ACT_NONE, ACT_UP, ACT_DOWN, ACT_LEFT, ACT_RIGHT,
@@ -125,6 +125,8 @@ static int save_pattern(App *a)
         for (int s = 0; s < N_STEPS; s++) fprintf(f, "%d", a->eng.lvl[t][s]);
         fprintf(f, "\n");
     }
+    for (int t = 0; t < N_TRACKS; t++)
+        fprintf(f, "KIT %s %d\n", TRACKS[t].label, a->eng.kit[t] + 1);
     fclose(f);
     return 0;
 }
@@ -144,7 +146,20 @@ static int load_pattern(App *a)
             got_any = 1;
         } else {
             char lab[8] = {0};
-            if (sscanf(line, "%4s", lab) == 1) {
+            if (!strncmp(line, "KIT ", 4)) {
+                int idx = 0;
+                if (sscanf(line + 4, "%4s %d", lab, &idx) == 2) {
+                    for (int t = 0; t < N_TRACKS; t++) {
+                        if (!strcmp(lab, TRACKS[t].label)) {
+                            int cnt = variant_count(t);
+                            if (cnt && idx < 1) idx = 1;
+                            if (cnt && idx > cnt) idx = cnt;
+                            if (cnt) a->eng.kit[t] = idx - 1;
+                            break;
+                        }
+                    }
+                }
+            } else if (sscanf(line, "%4s", lab) == 1) {
                 for (int t = 0; t < N_TRACKS; t++) {
                     if (!strcmp(lab, TRACKS[t].label)) {
                         char *p = strchr(line, ' ');
@@ -209,12 +224,35 @@ static void draw_ui(App *a)
     /* track labels */
     for (int t = 0; t < N_TRACKS; t++) {
         int y = GRID_Y0 + t * ROW_PITCH + (CELL_H - 8) / 2;
+        int on_row = (a->mode == MODE_EDIT || a->mode == MODE_KIT) && a->cur_track == t;
         cv_rect(c, 8, GRID_Y0 + t * ROW_PITCH, 4, CELL_H, TRACKS[t].color);
-        cv_text(c, 22, y, TRACKS[t].label, 1,
-                (a->mode == MODE_EDIT && a->cur_track == t) ? TRACKS[t].color : C_TEXT_DIM);
+        cv_text(c, 22, y, TRACKS[t].label, 1, on_row ? TRACKS[t].color : C_TEXT_DIM);
+        if (variant_count(t) > 1) {                  /* current variant number */
+            snprintf(tbuf, sizeof tbuf, "%d", e->kit[t] + 1);
+            cv_text(c, 46, y, tbuf, 1, C_TEXT_DIM);
+        }
     }
 
-    /* cells */
+    /* cells (edit) / variant picker (kit) */
+    if (a->mode == MODE_KIT) {
+        for (int t = 0; t < N_TRACKS; t++) {
+            Uint32 col = TRACKS[t].color;
+            int cnt = variant_count(t);
+            for (int v = 0; v < cnt; v++) {
+                int x = GRID_X0 + v * COL_PITCH;
+                int y = GRID_Y0 + t * ROW_PITCH;
+                int sel = (e->kit[t] == v);
+                cv_rect(c, x, y, CELL_W, CELL_H, sel ? col : cv_dim(col, 0.20f));
+                if (sel)
+                    cv_border(c, x + 5, y + 5, CELL_W - 10, CELL_H - 10, 2, C_ACCENT);
+                if (t == a->cur_track) {              /* 1-based position in box */
+                    snprintf(tbuf, sizeof tbuf, "%d", v + 1);
+                    cv_text(c, x + (CELL_W - 8) / 2, y + (CELL_H - 8) / 2, tbuf, 1,
+                            sel ? 0x000000 : C_TEXT_DIM);
+                }
+            }
+        }
+    } else {
     for (int t = 0; t < N_TRACKS; t++) {
         Uint32 col = TRACKS[t].color;
         for (int s = 0; s < N_STEPS; s++) {
@@ -232,9 +270,10 @@ static void draw_ui(App *a)
                 cv_border(c, x, y, CELL_W, CELL_H, 2, C_LED);
         }
     }
+    }
 
     /* cursor */
-    if (a->mode == MODE_EDIT) {
+    if (a->mode == MODE_EDIT || a->mode == MODE_KIT) {
         int x = GRID_X0 + a->cur_step * COL_PITCH;
         int y = GRID_Y0 + a->cur_track * ROW_PITCH;
         cv_border(c, x - 2, y - 2, CELL_W + 4, CELL_H + 4, 2, C_CURSOR);
@@ -242,14 +281,21 @@ static void draw_ui(App *a)
 
     /* status / menu / hints */
     Uint32 now = SDL_GetTicks();
+    if (a->mode == MODE_KIT) {
+        snprintf(tbuf, sizeof tbuf, "KIT: %s = %02d/%02d  %s", TRACKS[a->cur_track].label,
+                 e->kit[a->cur_track] + 1, variant_count(a->cur_track), TRACKS[a->cur_track].name);
+        cv_text(c, 10, 10 + 18, tbuf, 1, C_TEXT_DIM);
+    }
     if (a->msg[0] && (int)(now - a->msg_until) < 0)
         cv_text(c, 10, SCR_H - 14, a->msg, 1, C_TEXT);
+    else if (a->mode == MODE_KIT)
+        cv_text(c, 10, SCR_H - 14, "A:SELECT+HEAR  X:HEAR  B:BACK  START:PLAY", 1, C_TEXT_DIM);
     else
         cv_text(c, 10, SCR_H - 14, "A:STEP  B:CLEAR  X:HEAR  START:PLAY  SELECT:MENU  L/R:TEMPO", 1, C_TEXT_DIM);
 
     if (a->mode == MODE_MENU) {
-        static const char *items[] = { "EDIT TEMPO", "SAVE PATTERN", "LOAD PATTERN", "CLEAR ALL", "QUIT" };
-        int n = 5;
+        static const char *items[] = { "EDIT TEMPO", "SELECT KITS", "SAVE PATTERN", "LOAD PATTERN", "CLEAR ALL", "QUIT" };
+        int n = 6;
         int mw = 240, mh = 16 * n + 34;
         int mx = (SCR_W - mw) / 2, my = (SCR_H - mh) / 2;
         cv_rect(c, mx, my, mw, mh, C_PANEL);
@@ -325,17 +371,21 @@ static void do_menu(App *a, int item)
 {
     switch (item) {
     case 0: a->mode = MODE_TEMPO; break;
-    case 1: set_msg(a, save_pattern(a) == 0 ? "PATTERN SAVED" : "SAVE FAILED"); break;
-    case 2: set_msg(a, load_pattern(a) == 0 ? "PATTERN LOADED" : "NO SAVED PATTERN"); break;
-    case 3:
+    case 1:
+        a->mode = MODE_KIT;
+        a->cur_step = a->eng.kit[a->cur_track];   /* land cursor on current pick */
+        break;
+    case 2: set_msg(a, save_pattern(a) == 0 ? "PATTERN SAVED" : "SAVE FAILED"); break;
+    case 3: set_msg(a, load_pattern(a) == 0 ? "PATTERN LOADED" : "NO SAVED PATTERN"); break;
+    case 4:
         for (int t = 0; t < N_TRACKS; t++)
             for (int s = 0; s < N_STEPS; s++) a->eng.lvl[t][s] = 0;
         a->dirty = 1;
         set_msg(a, "PATTERN CLEARED");
         break;
-    case 4: a->quit = 1; break;
+    case 5: a->quit = 1; break;
     }
-    if (item != 0) a->mode = MODE_EDIT;
+    if (item != 0 && item != 1) a->mode = MODE_EDIT;
 }
 
 static void act(App *a, int act)
@@ -352,12 +402,12 @@ static void act(App *a, int act)
             unsigned char lv = (unsigned char)((e->lvl[a->cur_track][a->cur_step] + 1) % 3);
             e->lvl[a->cur_track][a->cur_step] = lv;
             a->dirty = 1;
-            if (lv) engine_preview(e, a->cur_track);
+            if (lv) engine_preview(e, a->cur_track, e->kit[a->cur_track]);
             break;
         }
         case ACT_CLEAR: e->lvl[a->cur_track][a->cur_step] = LVL_OFF; a->dirty = 1; break;
         case ACT_HEAR:
-        case ACT_HEAR_ALT: engine_preview(e, a->cur_track); break;
+        case ACT_HEAR_ALT: engine_preview(e, a->cur_track, e->kit[a->cur_track]); break;
         case ACT_PLAY:
             e->playing ^= 1;
             if (e->playing) e->restart = 1;   /* consumed in audio cb */
@@ -370,14 +420,50 @@ static void act(App *a, int act)
         break;
     case MODE_MENU:
         switch (act) {
-        case ACT_UP:    a->menu_sel = (a->menu_sel + 4) % 5; break;
-        case ACT_DOWN:  a->menu_sel = (a->menu_sel + 1) % 5; break;
+        case ACT_UP:    a->menu_sel = (a->menu_sel + 5) % 6; break;
+        case ACT_DOWN:  a->menu_sel = (a->menu_sel + 1) % 6; break;
         case ACT_CONFIRM: do_menu(a, a->menu_sel); break;
         case ACT_BACK:
         case ACT_MENU:  a->mode = MODE_EDIT; break;
         default: break;
         }
         break;
+    case MODE_KIT: {
+        int t = a->cur_track;
+        int cnt = variant_count(t);
+        switch (act) {
+        case ACT_UP:
+            a->cur_track = (t + N_TRACKS - 1) % N_TRACKS;
+            a->cur_step = e->kit[a->cur_track];
+            break;
+        case ACT_DOWN:
+            a->cur_track = (t + 1) % N_TRACKS;
+            a->cur_step = e->kit[a->cur_track];
+            break;
+        case ACT_LEFT:
+            if (cnt > 0) a->cur_step = (a->cur_step + cnt - 1) % cnt;
+            break;
+        case ACT_RIGHT:
+            if (cnt > 0) a->cur_step = (a->cur_step + 1) % cnt;
+            break;
+        case ACT_CONFIRM:
+            if (cnt > 0) { e->kit[t] = a->cur_step; a->dirty = 1; }
+            engine_preview(e, t, a->cur_step);
+            break;
+        case ACT_HEAR:
+        case ACT_HEAR_ALT:
+            engine_preview(e, t, a->cur_step);
+            break;
+        case ACT_PLAY:
+            e->playing ^= 1;
+            if (e->playing) e->restart = 1;
+            break;
+        case ACT_BACK:
+        case ACT_MENU: a->mode = MODE_EDIT; break;
+        default: break;
+        }
+        break;
+    }
     case MODE_TEMPO: {
         Engine *en = &a->eng;
         switch (act) {
@@ -565,15 +651,18 @@ int main(int argc, char **argv)
     const char *assets_arg = NULL;
     const char *bounce = NULL;
     const char *shot = NULL;
+    const char *mode_arg = NULL;
     int bounce_loops = 4;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
         else if (!strcmp(argv[i], "--bounce") && i + 1 < argc) bounce = argv[++i];
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) shot = argv[++i];
+        else if (!strcmp(argv[i], "--mode") && i + 1 < argc) mode_arg = argv[++i];
         else if (!strcmp(argv[i], "--loops") && i + 1 < argc) bounce_loops = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--help")) {
-            printf("usage: rg808 [--assets DIR] [--bounce out.wav --loops N] [--screenshot out.bmp]\n");
+            printf("usage: rg808 [--assets DIR] [--bounce out.wav --loops N]"
+                   " [--screenshot out.bmp [--mode edit|kit|menu|tempo]]\n");
             return 0;
         }
     }
@@ -619,12 +708,25 @@ int main(int argc, char **argv)
     SDL_free(base);
 
     int missing = samples_load_all(assets, 44100);
-    if (missing > 0) fprintf(stderr, "rg808: %d sample(s) missing from %s\n", missing, assets);
+    if (missing > 0) fprintf(stderr, "rg808: %d track(s) have no samples in %s\n", missing, assets);
 
     if (load_pattern(&a) != 0) demo_pattern(&a);
 
+    /* clamp selected variants to what actually loaded */
+    for (int t = 0; t < N_TRACKS; t++) {
+        int cnt = variant_count(t);
+        if (!cnt) { a.eng.kit[t] = 0; continue; }
+        if (a.eng.kit[t] < 0) a.eng.kit[t] = 0;
+        if (a.eng.kit[t] >= cnt) a.eng.kit[t] = cnt - 1;
+    }
+
     if (shot) {
         /* one UI frame -> BMP */
+        if (mode_arg) {
+            if (!strcmp(mode_arg, "kit"))   { a.mode = MODE_KIT; a.cur_step = a.eng.kit[a.cur_track]; }
+            else if (!strcmp(mode_arg, "menu"))  a.mode = MODE_MENU;
+            else if (!strcmp(mode_arg, "tempo")) a.mode = MODE_TEMPO;
+        }
         draw_ui(&a);
         SDL_Surface *sf = SDL_CreateRGBSurfaceWithFormatFrom(a.pixels, SCR_W, SCR_H, 32, SCR_W * 4, SDL_PIXELFORMAT_ARGB8888);
         SDL_SaveBMP(sf, shot);

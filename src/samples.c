@@ -1,36 +1,54 @@
 #include "samples.h"
-#include "engine.h"
 #include "wav.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static struct { char id[8]; float *data; int len; } tbl[N_TRACKS];
+typedef struct {
+    float *data[MAX_VARIANTS];
+    int len[MAX_VARIANTS];
+    int count;
+} Kit;
 
-const float *sample_data(const char *id, int *len)
+static Kit kits[N_TRACKS];
+
+int variant_count(int track)
 {
-    for (int i = 0; i < N_TRACKS; i++) {
-        if (!strcmp(tbl[i].id, id)) { *len = tbl[i].len; return tbl[i].data; }
-    }
+    if (track < 0 || track >= N_TRACKS) return 0;
+    return kits[track].count;
+}
+
+const float *sample_get(int track, int variant, int *len)
+{
     *len = 0;
-    return NULL;
+    if (track < 0 || track >= N_TRACKS) return NULL;
+    Kit *k = &kits[track];
+    if (k->count == 0) return NULL;
+    if (variant < 0) variant = 0;
+    if (variant >= k->count) variant = k->count - 1;
+    *len = k->len[variant];
+    return k->data[variant];
 }
 
 int samples_load_all(const char *dir, int rate)
 {
-    int missing = 0;
-    for (int i = 0; i < N_TRACKS; i++) {
-        char path[1024];
-        snprintf(path, sizeof path, "%s/%s.wav", dir, TRACKS[i].id);
-        WavAudio w;
-        if (wav_load(path, rate, &w) == 0) {
-            strncpy(tbl[i].id, TRACKS[i].id, 7); tbl[i].id[7] = 0;
-            tbl[i].data = w.data; tbl[i].len = w.frames;
-        } else {
-            tbl[i].id[0] = 0; tbl[i].data = NULL; tbl[i].len = 0;
-            missing++;
-            fprintf(stderr, "rg808: missing sample %s\n", path);
+    int empty_tracks = 0;
+    for (int t = 0; t < N_TRACKS; t++) {
+        Kit *k = &kits[t];
+        k->count = 0;
+        for (int v = 0; v < MAX_VARIANTS; v++) {
+            char path[1024];
+            snprintf(path, sizeof path, "%s/%s%02d.wav", dir, TRACKS[t].id, v + 1);
+            WavAudio w;
+            if (wav_load(path, rate, &w) != 0) break;   /* family ends here */
+            k->data[v] = w.data;
+            k->len[v] = w.frames;
+            k->count++;
+        }
+        if (k->count == 0) {
+            empty_tracks++;
+            fprintf(stderr, "rg808: no samples for %s in %s\n", TRACKS[t].id, dir);
         }
     }
-    return missing;
+    return empty_tracks;
 }
