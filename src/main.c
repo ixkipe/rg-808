@@ -302,14 +302,17 @@ static void SDLCALL audio_cb(void *ud, Uint8 *stream, int len)
 {
     App *a = (App *)ud;
     static float buf[4096 * 2];
-    int frames = len / 4;                       /* S16 stereo */
-    if (frames > 4096) frames = 4096;
-    if (a->eng.restart) { a->eng.restart = 0; engine_restart(&a->eng); }
-    engine_mix(&a->eng, buf, frames);
     Sint16 *out = (Sint16 *)stream;
-    for (int i = 0; i < 2 * frames; i++) {
-        float x = buf[i];
-        out[i] = (Sint16)(x * 32767.0f);
+    int remaining = len / 4;                        /* S16 stereo frames */
+    while (remaining > 0) {
+        int frames = remaining > 4096 ? 4096 : remaining;
+        if (a->eng.restart) { a->eng.restart = 0; engine_restart(&a->eng); }
+        engine_mix(&a->eng, buf, frames);
+        for (int i = 0; i < 2 * frames; i++) {
+            float x = buf[i];
+            *out++ = (Sint16)(x * 32767.0f);
+        }
+        remaining -= frames;
     }
 }
 
