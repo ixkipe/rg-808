@@ -18,11 +18,50 @@ static inline int engine_length_clamp(int n)
 enum { LVL_OFF = 0, LVL_ON = 1, LVL_ACC = 2 };
 enum { RCH_OFF = 0, RCH_2 = 1, RCH_3 = 2, RCH_4 = 3, RCH_FLAM = 4, RCH_COUNT = 5 };
 
+/* Master effects settings. The chain order is fixed:
+ * drive slot -> modulation slot -> delay -> reverb -> master. */
+typedef struct FxSettings {
+    int on;                    /* master chain: 1 = process, 0 = bypass */
+
+    /* drive slot: bitcrusher, overdrive or compression */
+    int drive_on;
+    int drive_type;            /* FX_DRIVE_* */
+    int crush_bits;            /* 4..16 */
+    int crush_down;            /* 1..32 */
+    int drive_amount;          /* 0..100 overdrive */
+    int drive_mix;             /* 0..100 overdrive */
+    int comp_threshold;        /* 0..100 */
+    int comp_ratio;            /* 1..20 */
+    int comp_makeup;           /* 0..100 */
+
+    /* modulation slot: flanger or phaser */
+    int mod_on;
+    int mod_type;              /* FX_MOD_* */
+    int mod_rate_x100;         /* 0.05..5.00 Hz, stored * 100 */
+    int mod_depth;             /* 0..100 */
+    int mod_fb;                /* 0..90 */
+    int mod_mix;               /* 0..100 */
+
+    /* delay, free-running or tempo-synced */
+    int delay_on;
+    int delay_sync;            /* 0 = milliseconds, 1 = note division */
+    int delay_ms;              /* 20..4000 ms */
+    int delay_div;             /* FX_DIV_* */
+    int delay_fb;              /* 0..90 */
+    int delay_mix;             /* 0..100 */
+
+    int reverb_on;
+    int reverb_room;           /* 0..100 */
+    int reverb_damp;           /* 0..100 */
+    int reverb_mix;            /* 0..100 */
+} FxSettings;
+
 /* One immutable pattern, prepared by the UI thread for song playback. */
 typedef struct PatternSnapshot {
     int bpm_x100;
     int swing_pct;
     int length;                /* 1..N_STEPS: steps played per bar */
+    FxSettings fx;             /* per-pattern effects chain */
     unsigned char lvl[N_TRACKS][N_STEPS];
     unsigned char rch[N_TRACKS][N_STEPS];
     int kit[N_TRACKS];
@@ -59,6 +98,9 @@ typedef struct Engine {
     volatile int preview_lvl;              /* level (gain) to audition */
     volatile int restart;                  /* set by UI on play to reset the step counter */
 
+    /* master effects parameters (per-pattern; UI -> audio) */
+    volatile FxSettings fx;
+
     /* song mode: the UI builds an immutable snapshot set, then swaps it in */
     volatile int song_playing;             /* play the snapshot set instead of the live pattern */
     volatile int song_loop;                /* loop at the end of the chain */
@@ -77,6 +119,7 @@ typedef struct Engine {
     int step;
     Voice voices[MAX_VOICES];
     unsigned long long voice_fire[MAX_VOICES]; /* for stealing */
+    struct FxState *fx_state;              /* heap-allocated effect buffers/state */
     int rate;
     float master;
 } Engine;
@@ -93,6 +136,7 @@ typedef struct TrackInfo {
 extern const TrackInfo TRACKS[N_TRACKS];
 
 void engine_init(Engine *e, int rate);
+void engine_free(Engine *e);                      /* release effect buffers */
 void engine_fire_step(Engine *e, int step);       /* fire all notes at this step */
 void engine_preview(Engine *e, int track, int variant, int rch, int lvl); /* audition ASAP (X) */
 void engine_restart(Engine *e);                   /* restart clock from step 0 / start bar */

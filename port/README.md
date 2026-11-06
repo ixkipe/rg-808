@@ -2,8 +2,10 @@
 
 A Roland TR-808 clone for PortMaster handhelds: a 1-16-step, 11-track drum
 machine with per-step accents, sample-accurate sequencing, one-tap sample
-selection per voice (kit mode), a 200-slot pattern library and song chains
-with WAV export, written in C with SDL2. Runs natively at 640x480.
+selection per voice (kit mode), a 200-slot pattern library, song chains with
+WAV export, and a per-pattern master effects chain (selectable drive and
+modulation, tempo-synced delay, reverb), written in C with SDL2. Runs natively
+at 640x480.
 
 > **Disclaimer: this project was made with AI.** All of the source code, build
 > and packaging tooling, documentation and planning in this repository were
@@ -26,16 +28,17 @@ packaging conventions.
 | B | Clear step (back in menus) |
 | X or Y | Hear selected voice |
 | START | Play / stop |
-| SELECT | Menu (tempo, swing, pattern length, ratchets, kits, save, pattern library, clear, quit) |
+| SELECT | Menu (tempo, swing, pattern length, ratchets, kits, effects, save, pattern library, clear, quit) |
 | L1 / L2 / R1 / R2 | Shoulder shortcuts (hold; on-screen D-pad shows each direction) |
 
 Shoulder shortcuts (hold + D-pad):
 L1+Left = tempo, L1+Right = swing, L1+Up = pattern length,
 L2+Left = pattern library, L2+Right = song mode,
-R1+Left = sample/kit selection,
-R1+Right = ratchet notes. R2 and the other combinations are reserved for
-future features. Pressing a shoulder shows the D-pad hint overlay; releasing
-it hides the overlay immediately.
+R1+Left = sample/kit selection, R1+Right = ratchet notes,
+R2+Up = drive FX, R2+Left = modulation FX,
+R2+Down = delay FX, R2+Right = reverb FX. Other combinations are reserved
+for future features. Pressing a shoulder shows the D-pad hint overlay;
+releasing it hides the overlay immediately.
 
 Swing (menu -> EDIT SWING) shuffles every even 16th, 0-100%. Pattern length
 (menu -> PATTERN LENGTH, or L1+Up) plays 1-16 of the 16 steps; steps past the
@@ -45,6 +48,13 @@ A cycles the mode, the cell shows its digit. Kit mode (menu -> SELECT KITS):
 each row is an instrument, the numbered columns are that instrument's
 sample variants. A picks and auditions, X auditions, B returns. All picks
 are saved with the pattern.
+
+Effects (menu -> EFFECTS): per-pattern master chain
+drive -> modulation -> delay -> reverb. Drive is selectable as bitcrusher,
+overdrive or compression; modulation as flanger or phaser. Delay can be set
+in milliseconds or tempo-synced to straight, triplet and dotted divisions.
+Up/down selects, left/right adjusts, A toggles the selected stage or sync.
+FX are saved with the pattern; `conf/fx.txt` is the fallback for old patterns.
 
 Pattern library (menu -> PATTERN LIBRARY): 200 numbered slots. D-Pad selects,
 left/right pages, A loads, B returns; SELECT opens save/copy/rename/delete.

@@ -1,9 +1,12 @@
 # RG-808 — a Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster)
 
+**Version 0.1** — first complete development release (2026-11-07).
+
 A 1–16-step, 11-track drum machine written in C with SDL2, packaged as a
 PortMaster "ready-to-run" port. Per-step accents, sample-accurate sequencing,
-a 200-slot pattern library, song chains with WAV export, 640×480 native UI,
-D-pad driven.
+a 200-slot pattern library, song chains with WAV export, a per-pattern master
+effects chain (selectable drive, selectable modulation, tempo-synced delay,
+reverb), 640×480 native UI, D-pad driven.
 
 > **Disclaimer: this project was made with AI.** All of the source code, build
 > and packaging tooling, documentation and planning in this repository were
@@ -40,6 +43,7 @@ rg808.exe --song --bounce song.wav      # render the song chain once
 rg808.exe --song                        # export to conf/song.wav
 rg808.exe --test-song                   # headless song checks
 rg808.exe --test-length                 # headless pattern-length checks
+rg808.exe --test-fx                     # headless effects checks
 rg808.exe --screenshot shot.bmp         # render one UI frame to BMP
 rg808.exe --screenshot p.bmp --mode pattern   # pattern browser frame
 ```
@@ -80,7 +84,7 @@ tools\device\probe.sh > probe.txt 2>&1     # in Mustard Terminal
 | B | Clear step (back in menus) |
 | X / Y | Hear sound of the selected track |
 | START | Play / stop |
-| SELECT | Menu (tempo, swing, pattern length, ratchets, kits, save, pattern library, song mode, clear all, quit) |
+| SELECT | Menu (tempo, swing, pattern length, ratchets, kits, effects, save, pattern library, song mode, clear all, quit) |
 | L1 / L2 / R1 / R2 | Shoulder shortcuts — hold one and a D-pad hint appears |
 
 **Shoulder shortcuts**: hold a shoulder button and the UI shows a D-pad-shaped
@@ -95,11 +99,13 @@ cheat sheet for that button. The assigned combinations are:
 | L2 + Right | Song mode |
 | R1 + Left | Sample/kit selection |
 | R1 + Right | Ratchet notes |
-| R2 | reserved |
+| R2 + Up | Drive FX |
+| R2 + Left | Modulation FX |
+| R2 + Down | Delay FX |
+| R2 + Right | Reverb FX |
 
-Other combinations are reserved for future features (effects, per-track
-controls, …). Pressing a shoulder shows the hint; releasing it hides the hint
-immediately.
+Other combinations are reserved for future features. Pressing a shoulder shows
+the hint; releasing it hides the hint immediately.
 
 **Swing**: menu → EDIT SWING; 0–100 % shuffles every even 16th late
 (~67 % ≈ triplet feel). **Pattern length**: menu → PATTERN LENGTH (or L1 + Up)
@@ -113,6 +119,17 @@ instruments, columns = sample variants (numbered boxes); A selects +
 auditions, X auditions only, B returns. Each voice ships every matching
 variant from the pack (BD/SN: 16, toms: 7, CH: 5, OH: 3, CL: 2, CP: 3, CB: 2,
 CY: 6). All selections are saved with the pattern.
+
+**Effects**: menu → EFFECTS edits the active pattern's master chain:
+drive → modulation → delay → reverb. The drive slot is selectable as
+bitcrusher (4–16 bits, 1–32× sample-and-hold), overdrive (drive/mix) or
+compression (threshold/ratio/makeup); the modulation slot is selectable as
+flanger or phaser (rate/depth/feedback/mix). The delay runs 20–4000 ms or
+tempo-syncs to 1/4, 1/8, 1/16, 1/4T, 1/8T, 1/16T, 4D, 8D or 16D, following the
+live tempo or the current song bar. Up/down selects a row, left/right adjusts,
+and A toggles the master bypass, a stage or SYNC. Effects are stored with each
+pattern and autosave with it; `conf/fx.txt` is the fallback for older patterns
+without FX lines. Master bypass is bit-identical to the dry render.
 
 **Pattern library**: menu → PATTERN LIBRARY opens 200 numbered slots.
 D-Pad up/down moves, left/right pages by 12, A loads the selected
@@ -137,9 +154,10 @@ progress bar (44.1 kHz/16-bit stereo, one pass plus a two-second tail).
 Your pattern and tempo are saved automatically on quit (menu: QUIT) and can be
 saved/loaded manually. Patterns live in `conf/patterns/NNN.txt`, with slot
 names and the active slot in `conf/patterns/index.txt`; the song chain lives
-in `conf/song.txt` inside the port folder on the card. Writes go to a temp
-file, are flushed, then renamed into place, so an interrupted save never
-truncates a pattern or the song.
+in `conf/song.txt` inside the port folder on the card. Pattern files include
+their FX chain; `conf/fx.txt` supplies the fallback chain for older patterns
+without FX lines. Writes go to a temp file, are flushed, then renamed into
+place, so an interrupted save never truncates a pattern or song.
 
 ## Kit mapping
 Each voice ships its whole variant family from the pack as `<id>NN.wav`
@@ -148,12 +166,16 @@ Each voice ships its whole variant family from the pack as `<id>NN.wav`
 the `dflt` column in `src/engine.c`.
 
 ## Status / roadmap
+- **Version 0.1** (2026-11-07): first complete development release. M1–M9.5
+  are implemented on PC and both ARM cross-builds; physical-device validation
+  and CPU tuning are still pending.
 - v1: single pattern, 11 tracks, accents, sample selection per voice
   (kit mode), save.
 - v2 (in progress): swing + ratchets (M6), 200-slot pattern library with
   rename/copy/delete and legacy import (M7), shoulder shortcut layer, song
-  chains with streaming WAV export (M8), per-pattern length 1–16. Next:
-  effects, per-track volume/mute.
+  chains with streaming WAV export (M8), per-pattern length 1–16, and master
+  effects (M9: selectable bitcrusher/overdrive/compression, flanger/phaser,
+  tempo-synced delay, reverb) with per-pattern settings (M9.5).
 
 ## Credits & licences
 Code: this project (MIT where not otherwise noted). SDL2 (zlib), public-domain

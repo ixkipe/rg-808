@@ -12,6 +12,7 @@ add_executable(rg808
     src/wav.c
     src/pattern.c
     src/song.c
+    src/fx.c
 )
 
 if (WIN32)

@@ -4,7 +4,7 @@
 set -e
 cd /src
 
-SRCS="src/main.c src/engine.c src/canvas.c src/samples.c src/wav.c src/pattern.c src/song.c"
+SRCS="src/main.c src/engine.c src/canvas.c src/samples.c src/wav.c src/pattern.c src/song.c src/fx.c"
 CFLAGS="-O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -I/usr/include/SDL2 -DNDEBUG"
 LIBS="-lSDL2 -lm"
 

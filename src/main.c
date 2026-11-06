@@ -16,6 +16,7 @@
 #include "samples.h"
 #include "pattern.h"
 #include "song.h"
+#include "fx.h"
 
 #define SCR_W 640
 #define SCR_H 480
@@ -27,7 +28,7 @@
 #define PAT_LIST_Y 92
 #define PAT_LIST_W 592
 #define PAT_ACT_N  6
-#define MENU_N     10
+#define MENU_N     11
 
 /* song page geometry */
 #define SONG_ROWS   12
@@ -43,7 +44,7 @@
 #define ROW_PITCH (CELL_H + 6)          /* 36 */
 
 enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_KIT, MODE_RCH, MODE_SWING,
-            MODE_LENGTH, MODE_PATTERN, MODE_PAT_ACT, MODE_RENAME,
+            MODE_LENGTH, MODE_FX, MODE_PATTERN, MODE_PAT_ACT, MODE_RENAME,
             MODE_SONG, MODE_SONG_ACT, MODE_EXPORT };
 
 enum Action {
@@ -74,12 +75,16 @@ typedef struct {
     Song song;
     SongSet *song_sets[2];            /* double-buffered immutable snapshot sets */
     int song_set_active;              /* buffer index the engine last used */
+    FxSettings edit_fx;               /* live-pattern chain while a song plays */
+    int edit_fx_valid;
     int song_sel;                     /* song editor cursor (0-based bar) */
     int song_act_sel;
     int song_dirty;
     Uint32 song_last_save;
     char song_path[1200];
     char song_wav_path[1200];
+    char fx_path[1200];
+    int fx_sel;                       /* FX page cursor */
     int export_progress;              /* 0..1000 */
     char export_display[64];
     int sh_held[SH_COUNT];            /* shoulder buttons currently down */
@@ -217,6 +222,16 @@ static void resolve_conf(App *a, const char *base)
 
     snprintf(a->song_path, sizeof a->song_path, "%s/song.txt", a->lib.conf_dir);
     snprintf(a->song_wav_path, sizeof a->song_wav_path, "%s/song.wav", a->lib.conf_dir);
+    snprintf(a->fx_path, sizeof a->fx_path, "%s/fx.txt", a->lib.conf_dir);
+}
+
+static int load_fx_settings(App *a)
+{
+    FxSettings f;
+    int rc = fx_load_file(&f, a->fx_path);
+    fx_set_fallback(&f);
+    fx_apply(&a->eng, &f);
+    return rc;
 }
 
 static int save_current(App *a)
@@ -289,6 +304,12 @@ static const char *shortcut_label(int sh, int ad)
         if (ad == ACT_LEFT) return "SAMPLE KIT";
         if (ad == ACT_RIGHT) return "RATCHET";
         break;
+    case SH_R2:
+        if (ad == ACT_UP) return "DRIVE FX";
+        if (ad == ACT_LEFT) return "MOD FX";
+        if (ad == ACT_DOWN) return "DELAY FX";
+        if (ad == ACT_RIGHT) return "REVERB FX";
+        break;
     default:
         break;
     }
@@ -322,9 +343,7 @@ static void draw_shortcut_overlay(App *a)
     snprintf(buf, sizeof buf, "%s + D-PAD", SH_NAMES[sh]);
     cv_text(c, px + 16, py + 10, buf, 1, C_TEXT);
     cv_text(c, px + 16, py + 26,
-            sh == SH_R2 ? "NO SHORTCUTS ASSIGNED YET"
-                        : "PRESS A DIRECTION TO OPEN ITS MENU",
-            1, C_TEXT_DIM);
+            "PRESS A DIRECTION TO OPEN ITS MENU", 1, C_TEXT_DIM);
 
     const int cell = 42, gap = 6;
     int cx = px + 210, cy = py + 140;
@@ -437,9 +456,298 @@ static void draw_pattern_list(App *a, int with_actions)
     }
 }
 
-static void draw_rename(App *a)
+/* -------------------------------------------------------------- effects UI */
+
+enum {
+    FXR_MASTER,
+    FXR_DRIVE_ON, FXR_DRIVE_TYPE,
+    FXR_CRUSH_BITS, FXR_CRUSH_DOWN,
+    FXR_OD_AMOUNT, FXR_OD_MIX,
+    FXR_COMP_THRESH, FXR_COMP_RATIO, FXR_COMP_MAKEUP,
+    FXR_MOD_ON, FXR_MOD_TYPE, FXR_MOD_RATE, FXR_MOD_DEPTH,
+    FXR_MOD_FB, FXR_MOD_MIX,
+    FXR_DELAY_ON, FXR_DELAY_SYNC, FXR_DELAY_TIME,
+    FXR_DELAY_FB, FXR_DELAY_MIX,
+    FXR_REVERB_ON, FXR_REVERB_ROOM, FXR_REVERB_DAMP, FXR_REVERB_MIX,
+    FXR_COUNT
+};
+
+static const char *const DRIVE_NAMES[FX_DRIVE_COUNT] = {
+    "BITCRUSH", "OVERDRIVE", "COMPRESS"
+};
+static const char *const MOD_NAMES[FX_MOD_COUNT] = {
+    "FLANGER", "PHASER"
+};
+
+static int fx_clampi(int v, int lo, int hi)
+{
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+/* Rows visible for the selected drive algorithm. */
+static int fx_visible_rows(const Engine *e, int *rows)
+{
+    int n = 0;
+    int type = fx_clampi(e->fx.drive_type, 0, FX_DRIVE_COUNT - 1);
+    rows[n++] = FXR_MASTER;
+    rows[n++] = FXR_DRIVE_ON;
+    rows[n++] = FXR_DRIVE_TYPE;
+    if (type == FX_DRIVE_CRUSH) {
+        rows[n++] = FXR_CRUSH_BITS;
+        rows[n++] = FXR_CRUSH_DOWN;
+    } else if (type == FX_DRIVE_OVERDRIVE) {
+        rows[n++] = FXR_OD_AMOUNT;
+        rows[n++] = FXR_OD_MIX;
+    } else {
+        rows[n++] = FXR_COMP_THRESH;
+        rows[n++] = FXR_COMP_RATIO;
+        rows[n++] = FXR_COMP_MAKEUP;
+    }
+    rows[n++] = FXR_MOD_ON;
+    rows[n++] = FXR_MOD_TYPE;
+    rows[n++] = FXR_MOD_RATE;
+    rows[n++] = FXR_MOD_DEPTH;
+    rows[n++] = FXR_MOD_FB;
+    rows[n++] = FXR_MOD_MIX;
+    rows[n++] = FXR_DELAY_ON;
+    rows[n++] = FXR_DELAY_SYNC;
+    rows[n++] = FXR_DELAY_TIME;
+    rows[n++] = FXR_DELAY_FB;
+    rows[n++] = FXR_DELAY_MIX;
+    rows[n++] = FXR_REVERB_ON;
+    rows[n++] = FXR_REVERB_ROOM;
+    rows[n++] = FXR_REVERB_DAMP;
+    rows[n++] = FXR_REVERB_MIX;
+    return n;
+}
+
+/* Open the FX page with the cursor on one section's first row. */
+static void fx_open_section(App *a, int target)
+{
+    int rows[24];
+    int n = fx_visible_rows(&a->eng, rows);
+    a->fx_sel = 0;
+    for (int i = 0; i < n; i++) {
+        if (rows[i] == target) {
+            a->fx_sel = i;
+            break;
+        }
+    }
+    a->mode = MODE_FX;
+}
+
+static int fx_row_is_toggle(int row)
+{
+    return row == FXR_MASTER || row == FXR_DRIVE_ON || row == FXR_MOD_ON ||
+           row == FXR_DELAY_ON || row == FXR_DELAY_SYNC ||
+           row == FXR_REVERB_ON;
+}
+
+static int fx_row_stage_on(const Engine *e, int row)
+{
+    if (row == FXR_MASTER) return 1;
+    if (row <= FXR_COMP_MAKEUP) return e->fx.drive_on;
+    if (row <= FXR_MOD_MIX) return e->fx.mod_on;
+    if (row <= FXR_DELAY_MIX) return e->fx.delay_on;
+    return e->fx.reverb_on;
+}
+
+static const char *fx_row_label(const Engine *e, int row)
+{
+    switch (row) {
+    case FXR_MASTER:        return "FX MASTER";
+    case FXR_DRIVE_ON:      return "DRIVE";
+    case FXR_DRIVE_TYPE:    return "  TYPE";
+    case FXR_CRUSH_BITS:    return "  BITS";
+    case FXR_CRUSH_DOWN:    return "  DOWN";
+    case FXR_OD_AMOUNT:     return "  DRIVE";
+    case FXR_OD_MIX:        return "  MIX";
+    case FXR_COMP_THRESH:   return "  THRESH";
+    case FXR_COMP_RATIO:    return "  RATIO";
+    case FXR_COMP_MAKEUP:   return "  MAKEUP";
+    case FXR_MOD_ON:        return "MODULATION";
+    case FXR_MOD_TYPE:      return "  TYPE";
+    case FXR_MOD_RATE:      return "  RATE";
+    case FXR_MOD_DEPTH:     return "  DEPTH";
+    case FXR_MOD_FB:        return "  FEEDBACK";
+    case FXR_MOD_MIX:       return "  MIX";
+    case FXR_DELAY_ON:      return "DELAY";
+    case FXR_DELAY_SYNC:    return "  SYNC";
+    case FXR_DELAY_TIME:    return e->fx.delay_sync ? "  DIV" : "  TIME";
+    case FXR_DELAY_FB:      return "  FEEDBACK";
+    case FXR_DELAY_MIX:     return "  MIX";
+    case FXR_REVERB_ON:     return "REVERB";
+    case FXR_REVERB_ROOM:   return "  ROOM";
+    case FXR_REVERB_DAMP:   return "  DAMP";
+    case FXR_REVERB_MIX:    return "  MIX";
+    default:                return "";
+    }
+}
+
+static void fx_row_text(const Engine *e, int row, char *buf, size_t cap)
+{
+    switch (row) {
+    case FXR_MASTER:        snprintf(buf, cap, "%s", e->fx.on ? "ON" : "BYPASS"); break;
+    case FXR_DRIVE_ON:      snprintf(buf, cap, "%s", e->fx.drive_on ? "ON" : "OFF"); break;
+    case FXR_DRIVE_TYPE:    snprintf(buf, cap, "%s",
+                                     DRIVE_NAMES[fx_clampi(e->fx.drive_type, 0, FX_DRIVE_COUNT - 1)]); break;
+    case FXR_CRUSH_BITS:    snprintf(buf, cap, "%d BIT", e->fx.crush_bits); break;
+    case FXR_CRUSH_DOWN:    snprintf(buf, cap, "x%d", e->fx.crush_down); break;
+    case FXR_OD_AMOUNT:     snprintf(buf, cap, "%d%%", e->fx.drive_amount); break;
+    case FXR_OD_MIX:        snprintf(buf, cap, "%d%%", e->fx.drive_mix); break;
+    case FXR_COMP_THRESH:   snprintf(buf, cap, "%d%%", e->fx.comp_threshold); break;
+    case FXR_COMP_RATIO:    snprintf(buf, cap, "%d:1", e->fx.comp_ratio); break;
+    case FXR_COMP_MAKEUP:   snprintf(buf, cap, "%d%%", e->fx.comp_makeup); break;
+    case FXR_MOD_ON:        snprintf(buf, cap, "%s", e->fx.mod_on ? "ON" : "OFF"); break;
+    case FXR_MOD_TYPE:      snprintf(buf, cap, "%s",
+                                     MOD_NAMES[fx_clampi(e->fx.mod_type, 0, FX_MOD_COUNT - 1)]); break;
+    case FXR_MOD_RATE:      snprintf(buf, cap, "%.2f HZ", e->fx.mod_rate_x100 / 100.0); break;
+    case FXR_MOD_DEPTH:     snprintf(buf, cap, "%d%%", e->fx.mod_depth); break;
+    case FXR_MOD_FB:        snprintf(buf, cap, "%d%%", e->fx.mod_fb); break;
+    case FXR_MOD_MIX:       snprintf(buf, cap, "%d%%", e->fx.mod_mix); break;
+    case FXR_DELAY_ON:      snprintf(buf, cap, "%s", e->fx.delay_on ? "ON" : "OFF"); break;
+    case FXR_DELAY_SYNC:    snprintf(buf, cap, "%s", e->fx.delay_sync ? "ON" : "OFF"); break;
+    case FXR_DELAY_TIME:
+        if (e->fx.delay_sync)
+            snprintf(buf, cap, "%s", FX_DIV_NAMES[fx_clampi(e->fx.delay_div, 0, FX_DIV_COUNT - 1)]);
+        else
+            snprintf(buf, cap, "%d MS", e->fx.delay_ms);
+        break;
+    case FXR_DELAY_FB:      snprintf(buf, cap, "%d%%", e->fx.delay_fb); break;
+    case FXR_DELAY_MIX:     snprintf(buf, cap, "%d%%", e->fx.delay_mix); break;
+    case FXR_REVERB_ON:     snprintf(buf, cap, "%s", e->fx.reverb_on ? "ON" : "OFF"); break;
+    case FXR_REVERB_ROOM:   snprintf(buf, cap, "%d%%", e->fx.reverb_room); break;
+    case FXR_REVERB_DAMP:   snprintf(buf, cap, "%d%%", e->fx.reverb_damp); break;
+    case FXR_REVERB_MIX:    snprintf(buf, cap, "%d%%", e->fx.reverb_mix); break;
+    default:                buf[0] = 0; break;
+    }
+}
+
+/* Left/right adjust one row. Percentages move in 5s, delay time in 50 ms. */
+static void fx_row_adjust(App *a, int row, int dir)
+{
+    Engine *e = &a->eng;
+    switch (row) {
+    case FXR_MASTER:        e->fx.on = dir > 0; break;
+    case FXR_DRIVE_ON:      e->fx.drive_on = dir > 0; break;
+    case FXR_DRIVE_TYPE:
+        e->fx.drive_type = (e->fx.drive_type + dir + FX_DRIVE_COUNT) % FX_DRIVE_COUNT;
+        break;
+    case FXR_CRUSH_BITS:
+        e->fx.crush_bits = fx_clampi(e->fx.crush_bits + dir, 4, 16); break;
+    case FXR_CRUSH_DOWN:
+        e->fx.crush_down = fx_clampi(e->fx.crush_down + dir, 1, 32); break;
+    case FXR_OD_AMOUNT:
+        e->fx.drive_amount = fx_clampi(e->fx.drive_amount + dir * 5, 0, 100); break;
+    case FXR_OD_MIX:
+        e->fx.drive_mix = fx_clampi(e->fx.drive_mix + dir * 5, 0, 100); break;
+    case FXR_COMP_THRESH:
+        e->fx.comp_threshold = fx_clampi(e->fx.comp_threshold + dir * 5, 0, 100); break;
+    case FXR_COMP_RATIO:
+        e->fx.comp_ratio = fx_clampi(e->fx.comp_ratio + dir, 1, 20); break;
+    case FXR_COMP_MAKEUP:
+        e->fx.comp_makeup = fx_clampi(e->fx.comp_makeup + dir * 5, 0, 100); break;
+    case FXR_MOD_ON:        e->fx.mod_on = dir > 0; break;
+    case FXR_MOD_TYPE:
+        e->fx.mod_type = (e->fx.mod_type + dir + FX_MOD_COUNT) % FX_MOD_COUNT;
+        break;
+    case FXR_MOD_RATE:
+        e->fx.mod_rate_x100 = fx_clampi(e->fx.mod_rate_x100 + dir * 5, 5, 500); break;
+    case FXR_MOD_DEPTH:
+        e->fx.mod_depth = fx_clampi(e->fx.mod_depth + dir * 5, 0, 100); break;
+    case FXR_MOD_FB:
+        e->fx.mod_fb = fx_clampi(e->fx.mod_fb + dir * 5, 0, 90); break;
+    case FXR_MOD_MIX:
+        e->fx.mod_mix = fx_clampi(e->fx.mod_mix + dir * 5, 0, 100); break;
+    case FXR_DELAY_ON:      e->fx.delay_on = dir > 0; break;
+    case FXR_DELAY_SYNC:    e->fx.delay_sync = dir > 0; break;
+    case FXR_DELAY_TIME:
+        if (e->fx.delay_sync)
+            e->fx.delay_div = (e->fx.delay_div + dir + FX_DIV_COUNT) % FX_DIV_COUNT;
+        else
+            e->fx.delay_ms = fx_clampi(e->fx.delay_ms + dir * 50, 20, 4000);
+        break;
+    case FXR_DELAY_FB:
+        e->fx.delay_fb = fx_clampi(e->fx.delay_fb + dir * 5, 0, 90); break;
+    case FXR_DELAY_MIX:
+        e->fx.delay_mix = fx_clampi(e->fx.delay_mix + dir * 5, 0, 100); break;
+    case FXR_REVERB_ON:     e->fx.reverb_on = dir > 0; break;
+    case FXR_REVERB_ROOM:
+        e->fx.reverb_room = fx_clampi(e->fx.reverb_room + dir * 5, 0, 100); break;
+    case FXR_REVERB_DAMP:
+        e->fx.reverb_damp = fx_clampi(e->fx.reverb_damp + dir * 5, 0, 100); break;
+    case FXR_REVERB_MIX:
+        e->fx.reverb_mix = fx_clampi(e->fx.reverb_mix + dir * 5, 0, 100); break;
+    default: return;
+    }
+    a->dirty = 1;
+}
+
+static void fx_row_toggle(App *a, int row)
+{
+    Engine *e = &a->eng;
+    switch (row) {
+    case FXR_MASTER:    e->fx.on ^= 1; break;
+    case FXR_DRIVE_ON:  e->fx.drive_on ^= 1; break;
+    case FXR_MOD_ON:    e->fx.mod_on ^= 1; break;
+    case FXR_DELAY_ON:  e->fx.delay_on ^= 1; break;
+    case FXR_DELAY_SYNC:e->fx.delay_sync ^= 1; break;
+    case FXR_REVERB_ON: e->fx.reverb_on ^= 1; break;
+    default: return;
+    }
+    a->dirty = 1;
+}
+
+static void draw_fx_page(App *a)
 {
     Canvas *c = &a->cv;
+    Engine *e = &a->eng;
+    int px = 44, py = 14, pw = 552, ph = 448;
+    cv_rect(c, px, py, pw, ph, C_PANEL);
+    cv_border(c, px, py, pw, ph, 2, C_TEXT);
+    cv_text(c, px + 14, py + 10, "PATTERN EFFECTS", 1, C_TEXT);
+    char head[80];
+    snprintf(head, sizeof head, "P%03d  DRIVE > MOD > DELAY > REVERB", a->lib.active_slot);
+    cv_text(c, px + 14, py + 26, head, 1, C_TEXT_DIM);
+
+    int rows[24];
+    int n = fx_visible_rows(e, rows);
+    if (a->fx_sel >= n) a->fx_sel = n - 1;
+    if (a->fx_sel < 0) a->fx_sel = 0;
+
+    int y0 = py + 44, rh = 18;
+    char buf[40];
+    for (int i = 0; i < n; i++) {
+        int row = rows[i];
+        int y = y0 + i * rh;
+        int sel = (i == a->fx_sel);
+        int stage_on = fx_row_stage_on(e, row);
+        int toggle = fx_row_is_toggle(row);
+        if (sel)
+            cv_rect(c, px + 8, y - 3, pw - 16, rh - 2, cv_dim(C_TEXT, 0.26f));
+
+        Uint32 lc = sel ? C_CURSOR
+                   : toggle ? C_TEXT
+                   : (stage_on ? C_TEXT_DIM : cv_dim(C_TEXT_DIM, 0.55f));
+        cv_text(c, px + 22, y, fx_row_label(e, row), 1, lc);
+
+        fx_row_text(e, row, buf, sizeof buf);
+        Uint32 vc = sel ? C_CURSOR
+                   : toggle ? (e->fx.on || row == FXR_MASTER ? C_TEXT : C_TEXT_DIM)
+                   : (stage_on ? C_TEXT : C_TEXT_DIM);
+        cv_text(c, px + pw - 22 - cv_text_w(buf, 1), y, buf, 1, vc);
+        if (sel)
+            cv_border(c, px + 8, y - 3, pw - 16, rh - 2, 1, C_CURSOR);
+    }
+
+    cv_text(c, px + 14, py + ph - 18,
+            "FX ARE SAVED WITH THIS PATTERN", 1, C_TEXT_DIM);
+}
+
+static void draw_rename(App *a)
+{    Canvas *c = &a->cv;
     int mw = 480, mh = 126;
     int mx = (SCR_W - mw) / 2, my = (SCR_H - mh) / 2;
     cv_rect(c, mx, my, mw, mh, C_PANEL);
@@ -754,6 +1062,8 @@ static void draw_ui(App *a)
         draw_song_list(a, 0);
     } else if (a->mode == MODE_SONG_ACT) {
         draw_song_list(a, 1);
+    } else if (a->mode == MODE_FX) {
+        draw_fx_page(a);
     } else if (a->mode == MODE_EXPORT) {
         draw_export_progress(a);
     }
@@ -789,6 +1099,8 @@ static void draw_ui(App *a)
     }
     else if (a->mode == MODE_SONG_ACT)
         cv_text(c, 10, SCR_H - 14, "UD:ACTION  LR:BAR  A:SELECT  B:CANCEL", 1, C_TEXT_DIM);
+    else if (a->mode == MODE_FX)
+        cv_text(c, 10, SCR_H - 14, "UD:SELECT  LR:ADJUST  A:TOGGLE  B:BACK", 1, C_TEXT_DIM);
     else if (a->mode == MODE_EXPORT)
         cv_text(c, 10, SCR_H - 14, "EXPORTING WAV - PLEASE WAIT", 1, C_TEXT_DIM);
     else
@@ -798,7 +1110,7 @@ static void draw_ui(App *a)
         static const char *items[MENU_N] = {
             "EDIT TEMPO", "EDIT SWING", "PATTERN LENGTH", "RATCHET NOTES",
             "SELECT KITS", "SAVE PATTERN", "PATTERN LIBRARY", "SONG MODE",
-            "CLEAR ALL", "QUIT"
+            "EFFECTS", "CLEAR ALL", "QUIT"
         };
         int n = MENU_N;
         int mw = 240, mh = 16 * n + 34;
@@ -876,6 +1188,10 @@ static void stop_playback(App *a)
 {
     if (a->eng.song_playing) engine_song_stop(&a->eng);
     a->eng.playing = 0;
+    if (a->edit_fx_valid) {
+        fx_apply(&a->eng, &a->edit_fx);
+        a->edit_fx_valid = 0;
+    }
 }
 
 static void toggle_edit_play(App *a)
@@ -921,6 +1237,8 @@ static void song_play(App *a, int from_bar)
     if (from_bar < 0) from_bar = 0;
     if (from_bar >= set->count) from_bar = set->count - 1;
     a->song_sel = from_bar;
+    fx_capture(&a->edit_fx, &a->eng);   /* restore after the song stops */
+    a->edit_fx_valid = 1;
     engine_song_start(&a->eng, set, a->song.loop, from_bar);
     if (missing > 0) set_msg(a, "PLAYING (%d EMPTY BARS)", missing);
     else set_msg(a, "PLAYING SONG");
@@ -1058,6 +1376,9 @@ static int render_song_wav(App *a, SongSet *set, const char *path, int show_prog
 
     Engine ex;
     engine_init(&ex, rate);
+    FxSettings fx;
+    fx_capture(&fx, &a->eng);
+    fx_apply(&ex, &fx);
     ex.song_set = set;
     ex.song_loop = 0;
     ex.song_start_bar = 0;
@@ -1079,6 +1400,7 @@ static int render_song_wav(App *a, SongSet *set, const char *path, int show_prog
         int n = (int)((total - done) > 1024 ? 1024 : (total - done));
         engine_mix(&ex, buf, n);
         if (wav_writer_write(&w, buf, n) != 0) {
+            engine_free(&ex);
             wav_writer_close(&w);
             return -1;
         }
@@ -1099,7 +1421,9 @@ static int render_song_wav(App *a, SongSet *set, const char *path, int show_prog
         draw_ui(a);
         present(a);
     }
-    return wav_writer_close(&w);
+    int rc = wav_writer_close(&w);
+    engine_free(&ex);
+    return rc;
 }
 
 static void song_export_ui(App *a)
@@ -1215,6 +1539,7 @@ static int test_song_run(App *a)
     CHECK(ex.song_playing == 0 && ex.song_done == 1, "non-loop song ends");
     CHECK(ex.song_bar == 3, "song ends on the last bar");
 
+    engine_free(&ex);
     engine_init(&ex, 44100);
     engine_song_start(&ex, set, 1, 0);
     engine_restart(&ex);
@@ -1226,6 +1551,7 @@ static int test_song_run(App *a)
     }
     CHECK(ex.song_playing == 1 && ex.song_done == 0, "looping song wraps");
     CHECK(ex.song_bar == 0, "looping song returns to bar 1");
+    engine_free(&ex);
 
     /* Live callback chunking (512) vs export chunking (1024) must be identical. */
     long long nframes = song_frames;
@@ -1253,6 +1579,8 @@ static int test_song_run(App *a)
         }
         CHECK(memcmp(la, lb, sizeof(float) * 2 * (size_t)nframes) == 0,
               "live/export chunk sizes render identically");
+        engine_free(&ea);
+        engine_free(&eb);
     } else {
         CHECK(0, "chunk-test buffers");
     }
@@ -1377,6 +1705,10 @@ static void do_menu(App *a, int item)
         open_song_mode(a);
         break;
     case 8:
+        a->mode = MODE_FX;
+        a->fx_sel = 0;
+        break;
+    case 9:
         for (int t = 0; t < N_TRACKS; t++)
             for (int s = 0; s < N_STEPS; s++) {
                 a->eng.lvl[t][s] = 0;
@@ -1386,7 +1718,7 @@ static void do_menu(App *a, int item)
         set_msg(a, "PATTERN CLEARED");
         a->mode = MODE_EDIT;
         break;
-    case 9: a->quit = 1; break;
+    case 10: a->quit = 1; break;
     }
 }
 
@@ -1612,6 +1944,39 @@ static void act(App *a, int act)
         if (act == ACT_CONFIRM || act == ACT_BACK || act == ACT_MENU) {
             clamp_cursor(a);
             a->mode = MODE_EDIT;
+        }
+        break;
+    }
+    case MODE_FX: {
+        int rows[24];
+        int n = fx_visible_rows(e, rows);
+        if (n < 1) break;
+        if (a->fx_sel >= n) a->fx_sel = n - 1;
+        if (a->fx_sel < 0) a->fx_sel = 0;
+        switch (act) {
+        case ACT_UP:
+            a->fx_sel = (a->fx_sel + n - 1) % n;
+            break;
+        case ACT_DOWN:
+            a->fx_sel = (a->fx_sel + 1) % n;
+            break;
+        case ACT_LEFT:
+            fx_row_adjust(a, rows[a->fx_sel], -1);
+            break;
+        case ACT_RIGHT:
+            fx_row_adjust(a, rows[a->fx_sel], 1);
+            break;
+        case ACT_CONFIRM:
+            fx_row_toggle(a, rows[a->fx_sel]);
+            break;
+        case ACT_PLAY:
+            toggle_edit_play(a);
+            break;
+        case ACT_BACK:
+        case ACT_MENU:
+            a->mode = MODE_EDIT;
+            break;
+        default: break;
         }
         break;
     }
@@ -1893,6 +2258,12 @@ static int shortcut_activate(App *a, int sh, int ad)
         }
         if (ad == ACT_RIGHT) { a->mode = MODE_RCH; return 1; }
         break;
+    case SH_R2:
+        if (ad == ACT_UP)    { fx_open_section(a, FXR_DRIVE_ON); return 1; }
+        if (ad == ACT_LEFT)  { fx_open_section(a, FXR_MOD_ON); return 1; }
+        if (ad == ACT_DOWN)  { fx_open_section(a, FXR_DELAY_ON); return 1; }
+        if (ad == ACT_RIGHT) { fx_open_section(a, FXR_REVERB_ON); return 1; }
+        break;
     default:
         break;
     }
@@ -1995,8 +2366,38 @@ static int test_shortcuts_run(App *a)
 
     a->mode = MODE_EDIT;
     handle_shoulder(a, SH_R2, 1);
+    input_dir(a, ACT_UP);
+    int rows[24];
+    int n = fx_visible_rows(&a->eng, rows);
+    CHECK(a->mode == MODE_FX && a->fx_sel < n && rows[a->fx_sel] == FXR_DRIVE_ON,
+          "R2+Up opens drive FX");
+    handle_shoulder(a, SH_R2, 0);
+    a->sh_suppress = 0;
+
+    a->mode = MODE_EDIT;
+    handle_shoulder(a, SH_R2, 1);
     input_dir(a, ACT_LEFT);
-    CHECK(a->mode == MODE_EDIT, "R2+Left is reserved and consumed");
+    n = fx_visible_rows(&a->eng, rows);
+    CHECK(a->mode == MODE_FX && a->fx_sel < n && rows[a->fx_sel] == FXR_MOD_ON,
+          "R2+Left opens modulation FX");
+    handle_shoulder(a, SH_R2, 0);
+    a->sh_suppress = 0;
+
+    a->mode = MODE_EDIT;
+    handle_shoulder(a, SH_R2, 1);
+    input_dir(a, ACT_DOWN);
+    n = fx_visible_rows(&a->eng, rows);
+    CHECK(a->mode == MODE_FX && a->fx_sel < n && rows[a->fx_sel] == FXR_DELAY_ON,
+          "R2+Down opens delay FX");
+    handle_shoulder(a, SH_R2, 0);
+    a->sh_suppress = 0;
+
+    a->mode = MODE_EDIT;
+    handle_shoulder(a, SH_R2, 1);
+    input_dir(a, ACT_RIGHT);
+    n = fx_visible_rows(&a->eng, rows);
+    CHECK(a->mode == MODE_FX && a->fx_sel < n && rows[a->fx_sel] == FXR_REVERB_ON,
+          "R2+Right opens reverb FX");
     handle_shoulder(a, SH_R2, 0);
     a->sh_suppress = 0;
 
@@ -2076,6 +2477,7 @@ static int test_length_run(App *a)
     /* Old pattern files have no LEN line and must keep working as 16 steps. */
     f = fopen(path, "w");
     if (f) { fputs("RG808P1\nBPM 120.00\n", f); fclose(f); }
+    engine_free(&r);
     engine_init(&r, 44100);
     CHECK(pattern_load_file(&r, path) == 0 && r.length == N_STEPS,
           "legacy pattern without LEN defaults to 16");
@@ -2083,14 +2485,17 @@ static int test_length_run(App *a)
     /* Values outside 1..16 are clamped on the way to disk. */
     e.length = 0;
     pattern_save_file(&e, path);
+    engine_free(&r);
     engine_init(&r, 44100);
     pattern_load_file(&r, path);
     CHECK(r.length == 1, "length below 1 clamps to 1");
     e.length = 99;
     pattern_save_file(&e, path);
+    engine_free(&r);
     engine_init(&r, 44100);
     pattern_load_file(&r, path);
     CHECK(r.length == N_STEPS, "length above 16 clamps to 16");
+    engine_free(&r);
     remove(path);
 
     /* Live clock: 125 BPM -> exactly 5292 frames per 16th. */
@@ -2111,6 +2516,7 @@ static int test_length_run(App *a)
     CHECK(ex.cur_step == 4, "clock stops the bar at the pattern length");
     engine_mix(&ex, buf, 1);
     CHECK(ex.cur_step == 0, "clock wraps to step 1 after the pattern length");
+    engine_free(&ex);
 
     /* Song snapshots: each bar uses its own length for both timing and end. */
     SongSet *set = calloc(1, sizeof(SongSet));
@@ -2148,15 +2554,363 @@ static int test_length_run(App *a)
         engine_mix(&sx, buf, 1);
         CHECK(sx.song_playing == 0 && sx.song_done == 1,
               "song ends after the last short bar");
+        engine_free(&sx);
     } else {
         CHECK(0, "length test snapshot allocation");
     }
     free(set);
+    engine_free(&e);
 
     SDL_Quit();
     return fails ? 1 : 0;
 #undef CHECK
 }
+/* Headless effects checks (`--test-fx`). */
+static void fx_test_pattern(Engine *e)
+{
+    for (int t = 0; t < N_TRACKS; t++)
+        for (int s = 0; s < N_STEPS; s++)
+            e->lvl[t][s] = 0;
+    e->lvl[0][0] = LVL_ACC;
+    e->lvl[1][4] = LVL_ON;
+    e->bpm_x100 = 12000;
+    e->length = N_STEPS;
+    e->playing = 1;
+    engine_restart(e);
+}
+
+static void fx_test_render(Engine *e, float *out, int frames)
+{
+    int done = 0;
+    while (done < frames) {
+        int n = (frames - done) > 512 ? 512 : (frames - done);
+        engine_mix(e, out + done * 2, n);
+        done += n;
+    }
+}
+
+static int test_fx_run(App *a)
+{
+    int fails = 0;
+    SDL_Init(SDL_INIT_TIMER);
+
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    FxSettings def;
+    fx_defaults(&def);
+    fx_set_fallback(&def);
+    fx_apply(&a->eng, &def);
+
+    const int frames = 44100;
+    float *dry = malloc(sizeof(float) * 2 * (size_t)frames);
+    float *wet = malloc(sizeof(float) * 2 * (size_t)frames);
+    if (!dry || !wet) {
+        CHECK(0, "fx test buffers");
+        free(dry);
+        free(wet);
+        SDL_Quit();
+        return 1;
+    }
+
+    Engine e;
+    engine_init(&e, 44100);
+    fx_test_pattern(&e);
+    fx_test_render(&e, dry, frames);
+    engine_free(&e);
+
+    /* Master bypass is bit-identical to the dry render. */
+    engine_init(&e, 44100);
+    fx_test_pattern(&e);
+    e.fx.on = 0;
+    e.fx.drive_on = e.fx.mod_on = e.fx.delay_on = e.fx.reverb_on = 1;
+    fx_test_render(&e, wet, frames);
+    CHECK(memcmp(dry, wet, sizeof(float) * 2 * (size_t)frames) == 0,
+          "master bypass is bit-identical");
+    engine_free(&e);
+
+    engine_init(&e, 44100);
+    fx_test_pattern(&e);
+    fx_test_render(&e, wet, frames);
+    CHECK(memcmp(dry, wet, sizeof(float) * 2 * (size_t)frames) == 0,
+          "all stages off is bit-identical");
+    engine_free(&e);
+
+    /* Every drive algorithm must alter the signal. */
+    for (int type = 0; type < FX_DRIVE_COUNT; type++) {
+        engine_init(&e, 44100);
+        fx_test_pattern(&e);
+        e.fx.drive_on = 1;
+        e.fx.drive_type = type;
+        if (type == FX_DRIVE_CRUSH) {
+            e.fx.crush_bits = 4;
+            e.fx.crush_down = 4;
+        } else if (type == FX_DRIVE_OVERDRIVE) {
+            e.fx.drive_amount = 90;
+            e.fx.drive_mix = 100;
+        } else {
+            e.fx.comp_threshold = 10;
+            e.fx.comp_ratio = 20;
+            e.fx.comp_makeup = 100;
+        }
+        fx_test_render(&e, wet, frames);
+        char msg[64];
+        snprintf(msg, sizeof msg, "%s drive changes audio", DRIVE_NAMES[type]);
+        CHECK(memcmp(dry, wet, sizeof(float) * 2 * (size_t)frames) != 0, msg);
+        engine_free(&e);
+    }
+
+    /* Flanger and phaser are both selectable. */
+    for (int type = 0; type < FX_MOD_COUNT; type++) {
+        engine_init(&e, 44100);
+        fx_test_pattern(&e);
+        e.fx.mod_on = 1;
+        e.fx.mod_type = type;
+        e.fx.mod_depth = 50;
+        e.fx.mod_mix = 50;
+        fx_test_render(&e, wet, frames);
+        char msg[64];
+        snprintf(msg, sizeof msg, "%s modulation changes audio", MOD_NAMES[type]);
+        CHECK(memcmp(dry, wet, sizeof(float) * 2 * (size_t)frames) != 0, msg);
+        engine_free(&e);
+    }
+
+    /* The phaser at 50 % must be clearly audible, and its max setting must not
+     * turn into a level boost / clipped overdrive. */
+    double dry_e = 0.0, diff_e = 0.0;
+    for (int i = 0; i < 2 * frames; i++) {
+        double d = (double)dry[i] - (double)wet[i];
+        dry_e += (double)dry[i] * (double)dry[i];
+        diff_e += d * d;
+    }
+    CHECK(diff_e > dry_e * 0.004, "phaser at 50% is clearly audible");
+
+    engine_init(&e, 44100);
+    fx_test_pattern(&e);
+    e.fx.mod_on = 1;
+    e.fx.mod_type = FX_MOD_PHASER;
+    e.fx.mod_rate_x100 = 500;
+    e.fx.mod_depth = 100;
+    e.fx.mod_fb = 90;
+    e.fx.mod_mix = 100;
+    fx_test_render(&e, wet, frames);
+    double wet_e = 0.0;
+    for (int i = 0; i < 2 * frames; i++)
+        wet_e += (double)wet[i] * (double)wet[i];
+    CHECK(wet_e < dry_e * 2.0, "phaser max level stays under control");
+    engine_free(&e);
+
+    /* Delay works free-running and tempo-synced. */
+    engine_init(&e, 44100);
+    fx_test_pattern(&e);
+    e.fx.delay_on = 1;
+    e.fx.delay_sync = 0;
+    e.fx.delay_ms = 120;
+    e.fx.delay_mix = 50;
+    fx_test_render(&e, wet, frames);
+    CHECK(memcmp(dry, wet, sizeof(float) * 2 * (size_t)frames) != 0,
+          "free-running delay changes audio");
+    engine_free(&e);
+
+    engine_init(&e, 44100);
+    fx_test_pattern(&e);
+    e.fx.delay_on = 1;
+    e.fx.delay_sync = 1;
+    e.fx.delay_div = FX_DIV_8;
+    e.fx.delay_mix = 50;
+    fx_test_render(&e, wet, frames);
+    CHECK(memcmp(dry, wet, sizeof(float) * 2 * (size_t)frames) != 0,
+          "tempo-synced delay changes audio");
+    engine_free(&e);
+
+    engine_init(&e, 44100);
+    fx_test_pattern(&e);
+    e.fx.reverb_on = 1;
+    e.fx.reverb_mix = 50;
+    fx_test_render(&e, wet, frames);
+    CHECK(memcmp(dry, wet, sizeof(float) * 2 * (size_t)frames) != 0,
+          "reverb changes audio");
+    engine_free(&e);
+
+    free(dry);
+    free(wet);
+
+    /* Settings defaults, clamping and persistence. */
+    char path[1200];
+    snprintf(path, sizeof path, "%s/test-fx.txt", a->lib.conf_dir);
+    FxSettings f, g;
+    fx_defaults(&f);
+    CHECK(f.on == 1 && f.crush_bits == 8 && f.delay_ms == 250 &&
+          f.delay_div == FX_DIV_8 && f.drive_type == FX_DRIVE_CRUSH &&
+          f.mod_type == FX_MOD_FLANGER,
+          "effects defaults");
+    CHECK(fx_delay_ms_for(1, 250, FX_DIV_4, 12000) == 500 &&
+          fx_delay_ms_for(1, 250, FX_DIV_8, 12000) == 250 &&
+          fx_delay_ms_for(1, 250, FX_DIV_16, 12000) == 125 &&
+          fx_delay_ms_for(1, 250, FX_DIV_4T, 12000) == 333 &&
+          fx_delay_ms_for(1, 250, FX_DIV_8T, 12000) == 167 &&
+          fx_delay_ms_for(1, 250, FX_DIV_16T, 12000) == 83 &&
+          fx_delay_ms_for(1, 250, FX_DIV_4D, 12000) == 750 &&
+          fx_delay_ms_for(1, 250, FX_DIV_8D, 12000) == 375 &&
+          fx_delay_ms_for(1, 250, FX_DIV_16D, 12000) == 188 &&
+          fx_delay_ms_for(0, 250, FX_DIV_4, 12000) == 250,
+          "delay divisions resolve at 120 BPM");
+    f.drive_type = 99;
+    f.mod_type = -1;
+    f.crush_bits = 2;
+    f.crush_down = 99;
+    f.comp_ratio = 99;
+    f.mod_rate_x100 = 999;
+    f.delay_ms = 5;
+    f.delay_div = 99;
+    f.reverb_mix = 200;
+    fx_clamp(&f);
+    CHECK(f.drive_type == FX_DRIVE_COMPRESS && f.mod_type == FX_MOD_FLANGER &&
+          f.crush_bits == 4 && f.crush_down == 32 && f.comp_ratio == 20 &&
+          f.mod_rate_x100 == 500 && f.delay_ms == 20 &&
+          f.delay_div == FX_DIV_16D && f.reverb_mix == 100,
+          "effects values clamp");
+    CHECK(fx_save_file(&f, path) == 0, "effects settings save");
+    CHECK(fx_load_file(&g, path) == 0, "effects settings reload");
+    CHECK(g.drive_type == f.drive_type && g.crush_bits == f.crush_bits &&
+          g.comp_ratio == f.comp_ratio && g.mod_type == f.mod_type &&
+          g.mod_rate_x100 == f.mod_rate_x100 && g.delay_ms == f.delay_ms &&
+          g.delay_div == f.delay_div && g.reverb_mix == f.reverb_mix,
+          "effects settings round-trip");
+    remove(path);
+
+    /* Old M9 FX files still load. */
+    FILE *old = fopen(path, "w");
+    if (old) {
+        fputs("RG808FX1\nFX ON 1\nFX CRUSH 1 5 3\n"
+              "FX FLANGER 1 60 40 20 70\n"
+              "FX DELAY 1 300 25 60\n"
+              "FX REVERB 1 40 60 35\n", old);
+        fclose(old);
+    }
+    CHECK(fx_load_file(&g, path) == 0 && g.drive_type == FX_DRIVE_CRUSH &&
+          g.crush_bits == 5 && g.crush_down == 3 &&
+          g.mod_type == FX_MOD_FLANGER && g.mod_rate_x100 == 60 &&
+          g.delay_sync == 0 && g.delay_ms == 300 &&
+          g.reverb_room == 40,
+          "old M9 effects file still loads");
+    remove(path);
+    CHECK(fx_load_file(&g, path) == -1 && g.crush_bits == 8,
+          "missing effects file keeps defaults");
+
+    /* Per-pattern persistence: save a pattern with an unusual chain. */
+    char ppath[1200];
+    snprintf(ppath, sizeof ppath, "%s/test-fx-pattern.txt", a->lib.conf_dir);
+    Engine pe;
+    engine_init(&pe, 44100);
+    pe.fx.on = 1;
+    pe.fx.drive_on = 1;
+    pe.fx.drive_type = FX_DRIVE_OVERDRIVE;
+    pe.fx.drive_amount = 77;
+    pe.fx.mod_on = 1;
+    pe.fx.mod_type = FX_MOD_PHASER;
+    pe.fx.mod_depth = 65;
+    pe.fx.delay_on = 1;
+    pe.fx.delay_sync = 1;
+    pe.fx.delay_div = FX_DIV_16D;
+    pe.fx.reverb_on = 1;
+    pe.fx.reverb_room = 81;
+    CHECK(pattern_save_file(&pe, ppath) == 0, "pattern saves its effects");
+    Engine pl;
+    engine_init(&pl, 44100);
+    CHECK(pattern_load_file(&pl, ppath) == 0, "pattern with effects loads");
+    FxSettings cap;
+    fx_capture(&cap, &pl);
+    CHECK(cap.drive_type == FX_DRIVE_OVERDRIVE && cap.drive_amount == 77 &&
+          cap.mod_type == FX_MOD_PHASER && cap.mod_depth == 65 &&
+          cap.delay_sync == 1 && cap.delay_div == FX_DIV_16D &&
+          cap.reverb_room == 81,
+          "pattern effects round-trip");
+    engine_free(&pl);
+    engine_free(&pe);
+    remove(ppath);
+
+    /* A legacy pattern without FX lines gets the global fallback. */
+    FxSettings fb;
+    fx_defaults(&fb);
+    fb.drive_on = 1;
+    fb.drive_type = FX_DRIVE_COMPRESS;
+    fb.comp_ratio = 12;
+    fb.mod_on = 1;
+    fb.mod_type = FX_MOD_PHASER;
+    fb.delay_sync = 1;
+    fb.delay_div = FX_DIV_4D;
+    fx_set_fallback(&fb);
+    FILE *lf = fopen(ppath, "w");
+    if (lf) { fputs("RG808P1\nBPM 120.00\n", lf); fclose(lf); }
+    engine_init(&pl, 44100);
+    CHECK(pattern_load_file(&pl, ppath) == 0, "legacy pattern loads");
+    fx_capture(&cap, &pl);
+    CHECK(cap.drive_on == 1 && cap.drive_type == FX_DRIVE_COMPRESS &&
+          cap.comp_ratio == 12 && cap.mod_type == FX_MOD_PHASER &&
+          cap.delay_sync == 1 && cap.delay_div == FX_DIV_4D,
+          "legacy pattern uses fallback effects");
+    engine_free(&pl);
+    remove(ppath);
+    fx_set_fallback(&def);
+
+    /* FX page actions: A toggles headers, left/right adjusts and clamps. */
+    fx_apply(&a->eng, &def);
+    a->mode = MODE_FX;
+    int rows[24];
+    int n = fx_visible_rows(&a->eng, rows);
+    int idx = 0;
+    for (int i = 0; i < n; i++) if (rows[i] == FXR_DRIVE_ON) idx = i;
+    a->fx_sel = idx;
+    act(a, ACT_CONFIRM);
+    CHECK(a->eng.fx.drive_on == 1, "A enables the drive stage");
+    a->eng.fx.crush_bits = 16;
+    n = fx_visible_rows(&a->eng, rows);
+    idx = 0;
+    for (int i = 0; i < n; i++) if (rows[i] == FXR_CRUSH_BITS) idx = i;
+    a->fx_sel = idx;
+    act(a, ACT_RIGHT);
+    CHECK(a->eng.fx.crush_bits == 16, "bit depth clamps at 16");
+    act(a, ACT_LEFT);
+    CHECK(a->eng.fx.crush_bits == 15, "left/right adjusts a value");
+    a->eng.fx.delay_sync = 0;
+    a->eng.fx.delay_ms = 4000;
+    n = fx_visible_rows(&a->eng, rows);
+    idx = 0;
+    for (int i = 0; i < n; i++) if (rows[i] == FXR_DELAY_TIME) idx = i;
+    a->fx_sel = idx;
+    act(a, ACT_RIGHT);
+    CHECK(a->eng.fx.delay_ms == 4000, "delay time clamps at 4000 ms");
+    a->eng.fx.delay_sync = 1;
+    a->eng.fx.delay_div = FX_DIV_16D;
+    n = fx_visible_rows(&a->eng, rows);
+    idx = 0;
+    for (int i = 0; i < n; i++) if (rows[i] == FXR_DELAY_TIME) idx = i;
+    a->fx_sel = idx;
+    act(a, ACT_RIGHT);
+    CHECK(a->eng.fx.delay_div == FX_DIV_4, "delay divisions wrap");
+    a->mode = MODE_EDIT;
+
+    /* Leaving song playback restores the live pattern's chain. */
+    FxSettings live_fx, song_fx;
+    fx_capture(&live_fx, &a->eng);
+    a->edit_fx = live_fx;
+    a->edit_fx_valid = 1;
+    song_fx = live_fx;
+    song_fx.crush_bits = 4;
+    fx_apply(&a->eng, &song_fx);
+    stop_playback(a);
+    fx_capture(&cap, &a->eng);
+    CHECK(a->edit_fx_valid == 0 && cap.crush_bits == live_fx.crush_bits,
+          "song stop restores the live effects chain");
+
+    SDL_Quit();
+    return fails ? 1 : 0;
+#undef CHECK
+}
+
 static int joy_covered_by_controller(SDL_JoystickID which)
 {
     return SDL_GameControllerFromInstanceID(which) != NULL;
@@ -2327,8 +3081,11 @@ static void handle_joy_axis(App *a, int axis, int val)
 static int run_bounce(App *a, const char *outpath, int loops)
 {
     int rate = 44100;
-    a->eng.rate = rate;
+    FxSettings fx;
+    fx_capture(&fx, &a->eng);
+    engine_free(&a->eng);
     engine_init(&a->eng, rate);
+    fx_apply(&a->eng, &fx);
     if (load_current(a) != 0) demo_pattern(a);
     a->eng.playing = 1;
     engine_restart(&a->eng);
@@ -2372,6 +3129,7 @@ int main(int argc, char **argv)
     int test_shortcuts = 0;
     int test_song = 0;
     int test_length = 0;
+    int test_fx = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -2388,11 +3146,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--test-shortcuts")) test_shortcuts = 1;
         else if (!strcmp(argv[i], "--test-song")) test_song = 1;
         else if (!strcmp(argv[i], "--test-length")) test_length = 1;
+        else if (!strcmp(argv[i], "--test-fx")) test_fx = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
-                   " [--test-shortcuts] [--test-song] [--test-length]"
-                   " [--screenshot out.bmp [--mode edit|kit|rch|swing|length|menu|tempo|pattern|song|songact|export|l1|l2|r1|r2]]\n");
+                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx]"
+                   " [--screenshot out.bmp [--mode edit|kit|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|l1|l2|r1|r2]]\n");
             return 0;
         }
     }
@@ -2409,21 +3168,29 @@ int main(int argc, char **argv)
 
     if (test_shortcuts) {
         SDL_free(base);
-        return test_shortcuts_run(&a);
+        int rc = test_shortcuts_run(&a);
+        engine_free(&a.eng);
+        return rc;
     }
 
-    if (bounce || save_slot_set || song_bounce || test_song || test_length) {
+    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx) {
         samples_load_all(assets, 44100);
         resolve_conf(&a, base ? base : ".");
+        load_fx_settings(&a);
         if (pattern_arg >= 1 && pattern_arg <= PAT_MAX_SLOTS)
             pattern_set_active(&a.lib, pattern_arg);
         SDL_free(base);
 
         if (test_song) return test_song_run(&a);
         if (test_length) return test_length_run(&a);
+        if (test_fx) return test_fx_run(&a);
 
         if (save_slot_set) {
+            engine_free(&a.eng);
             engine_init(&a.eng, 44100);
+            FxSettings fb;
+            fx_get_fallback(&fb);
+            fx_apply(&a.eng, &fb);
             if (load_current(&a) != 0) demo_pattern(&a);
             if (save_slot_arg < 1 || save_slot_arg > PAT_MAX_SLOTS) {
                 fprintf(stderr, "rg808: --save-slot must be 1..%d\n", PAT_MAX_SLOTS);
@@ -2486,6 +3253,7 @@ int main(int argc, char **argv)
     else SDL_PauseAudioDevice(a.dev, 0);
 
     resolve_conf(&a, base ? base : ".");
+    load_fx_settings(&a);
     if (pattern_arg >= 1 && pattern_arg <= PAT_MAX_SLOTS)
         pattern_set_active(&a.lib, pattern_arg);
     SDL_free(base);
@@ -2523,6 +3291,7 @@ int main(int argc, char **argv)
             else if (!strcmp(mode_arg, "rch"))   a.mode = MODE_RCH;
             else if (!strcmp(mode_arg, "swing")) a.mode = MODE_SWING;
             else if (!strcmp(mode_arg, "length")) a.mode = MODE_LENGTH;
+            else if (!strcmp(mode_arg, "fx"))    a.mode = MODE_FX;
             else if (!strcmp(mode_arg, "menu"))  a.mode = MODE_MENU;
             else if (!strcmp(mode_arg, "tempo")) a.mode = MODE_TEMPO;
             else if (!strcmp(mode_arg, "pattern")) {
@@ -2632,6 +3401,7 @@ int main(int argc, char **argv)
         }
         if (a.eng.song_done) {
             a.eng.song_done = 0;
+            stop_playback(&a);
             set_msg(&a, "SONG ENDED");
         }
         /* periodic autosave: kills/HOME-exit shouldn't lose the groove */
@@ -2654,6 +3424,7 @@ int main(int argc, char **argv)
     if (a.dev) SDL_CloseAudioDevice(a.dev);
     free(a.song_sets[0]);
     free(a.song_sets[1]);
+    engine_free(&a.eng);
     SDL_Quit();
     return 0;
 }

@@ -4,6 +4,7 @@
 #endif
 #include "pattern.h"
 #include "samples.h"
+#include "fx.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -320,6 +321,7 @@ void pattern_default_snapshot(PatternSnapshot *s)
     s->bpm_x100 = 12000;
     s->swing_pct = 0;
     s->length = N_STEPS;
+    fx_get_fallback(&s->fx);
     for (int t = 0; t < N_TRACKS; t++)
         s->kit[t] = TRACKS[t].dflt - 1;
     s->slot = 0;
@@ -330,6 +332,7 @@ static void copy_snapshot_to_engine(Engine *e, const PatternSnapshot *s)
     e->bpm_x100 = s->bpm_x100;
     e->swing_pct = s->swing_pct;
     e->length = engine_length_clamp(s->length);
+    fx_apply(e, &s->fx);
     for (int t = 0; t < N_TRACKS; t++) {
         for (int st = 0; st < N_STEPS; st++) {
             e->lvl[t][st] = s->lvl[t][st];
@@ -344,7 +347,9 @@ static int parse_pattern_stream(FILE *f, PatternSnapshot *s)
     char line[256];
     int got_any = 0;
     while (fgets(line, sizeof line, f)) {
-        if (!strncmp(line, "BPM ", 4)) {
+        if (fx_parse_line(&s->fx, line)) {
+            got_any = 1;
+        } else if (!strncmp(line, "BPM ", 4)) {
             double bpm = atof(line + 4);
             if (bpm < 4) bpm = 4;
             if (bpm > 300) bpm = 300;
@@ -402,6 +407,7 @@ static int parse_pattern_stream(FILE *f, PatternSnapshot *s)
             }
         }
     }
+    fx_clamp(&s->fx);
     return got_any ? 0 : -2;
 }
 
@@ -423,6 +429,9 @@ static int write_pattern_stream(FILE *f, Engine *e)
         fprintf(f, "KIT %s %d\n", TRACKS[t].label, e->kit[t] + 1);
     fprintf(f, "SWING %d\n", e->swing_pct);
     fprintf(f, "LEN %d\n", engine_length_clamp(e->length));
+    FxSettings fx;
+    fx_capture(&fx, e);
+    fx_write_stream(f, &fx);
     return ferror(f) ? -1 : 0;
 }
 

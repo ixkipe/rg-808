@@ -1,5 +1,8 @@
 # RG-808 Development Plan
 
+**Current version: 0.1** (2026-11-07). M1–M9.5 are implemented on PC and in the
+dual-arch cross-build; physical-device validation and CPU tuning remain open.
+
 Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster).
 1–16-step sequencer, single pattern, 11 classic voices, per-step accents.
 
@@ -63,10 +66,11 @@ launch shims in `<roms>/PORTS/`, port logs in `ports/rg808/log.txt`.
   - [ ] Optional: upstream PR to PortsMaster/PortMaster-New (requires their Discord
     testing thread + multi-CFW testing; not needed for personal use)
 
-## v2 feature milestones (grouped from `todo.md` — planned, not started)
+## v2 feature milestones (grouped from `todo.md`)
 
 Ordered so each layer builds on a stable base: step model → pattern storage →
-song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
+song assembly → output DSP. M6 and M9 are independent; M8 requires M7; M9.5
+extends M9.
 
 - [ ] **M6 — Timing & feel** *(todo: swing; ratchet notes) — done on PC, device check pending*
   - [x] **Swing/shuffle**: one global amount (0–100 % of a 16th), delays every even
@@ -132,23 +136,66 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
     legacy default, clamps, live clock wrap, per-bar song length/end) and
     bounce/song-export frame counts for LEN 1/4/8/16 plus the length-editor
     screenshot.
-- [ ] **M9 — Effects** *(todo: compression/overdrive/distortion — one; flanger/phaser —
-  one; delay; reverb) — independent of M6–M8, last because of CPU risk*
-  - Scope per the "either/or" note: master chain
-    `distortion → flanger → delay → reverb → master` (fixed order, per-stage on/off
-    + params), float, simple algorithms first (delay: circular buffer; reverb:
-    2–4 comb + damp; flanger: LFO 1-tap; distortion: soft-clip/saturation).
-  - Per-voice sends are explicitly out of scope for the first pass.
-  - UI: FX menu page (parameter editor reusing the TEMPO page component);
-    global bypass; `FX ...` config line(s) persisted.
-  - Risks/acceptance: measured CPU headroom on the H700 at 128-frame periods,
-    no dropouts with all four stages on, bypass = bit-identical to pre-M9 render.
-- [ ] **M10 — Ergonomics & machine feel** *(older backlog, grab-bag, reorderable)*
-  - Per-track volume/mute, accent-driven BD decay (true 808 behaviour, not just
-    gain), master volume UI, per-track pan maybe.
+- [x] **M9 — Effects** *(todo: compression/overdrive/bitcrusher — all selectable;
+  flanger/phaser — both selectable; delay; reverb) — independent of M6–M8*
+  - [x] Scope: master chain
+    `drive → modulation → delay → reverb → master` (fixed order, per-stage
+    on/off + params), float.
+  - [x] Drive slot is selectable: bitcrusher (4–16 bits + 1–32× sample-and-hold),
+    overdrive (tanh drive/mix), or compression (stereo-linked peak compressor
+    with threshold/ratio/makeup).
+  - [x] Modulation slot is selectable: flanger (LFO 1-tap delay) or phaser
+    (6-stage modulated allpass with a midrange coefficient sweep and feedback
+    gain compensation), both with rate/depth/feedback/mix. The phaser was
+    retuned after listening feedback: the coefficient sweeps the audible
+    midrange and the wet path is compensated for feedback boost, so max
+    settings no longer turn into a clipped overdrive.
+  - [x] Delay: stereo circular buffer, 20–4000 ms free-running or tempo-synced
+    to 1/4, 1/8, 1/16, 1/4T, 1/8T, 1/16T, 4D, 8D and 16D. Sync follows the live
+    tempo or the current song bar's BPM.
+  - [x] Reverb: 4 damped parallel combs + 2 series allpasses (room/damp/mix).
+  - [x] Per-voice sends remain out of scope.
+  - [x] UI: menu → EFFECTS shows only the rows relevant to the selected drive/
+    modulation algorithms; A toggles master/stages, left/right adjusts the
+    selected value, B returns.
+  - [x] Real-time safety: effect buffers are heap-allocated per engine; with
+    master bypass off no effect code touches the mix, so bypass stays
+    bit-identical to the pre-M9 render.
+  - [x] Verified by `tools/test-m9.ps1` / `--test-fx` (defaults, clamps,
+    persistence, bit-identical bypass/all-off, every drive/modulation algorithm,
+    each stage changes audio, all nine delay divisions resolve correctly) plus
+    the FX page screenshot. Device CPU spot-check at 128-frame periods with all
+    stages on is still pending.
+- [x] **M9.5 — Per-pattern effects** *(follow-up to M9)*
+  - [x] Data: `FxSettings` now lives in `PatternSnapshot`; each pattern file
+    carries `FX ...` lines; `song_build_set()` carries them per bar. The engine
+    applies the incoming snapshot's settings at every bar boundary and on a
+    song restart.
+  - [x] Runtime: **one shared effect state per Engine**, not one state per
+    pattern. Parameter changes at bar switches are just a few integer writes;
+    per-sample CPU is unchanged. At 250 BPM a 1-step bar lasts 60 ms, so even
+    the fastest song only updates a handful of values a few times per second.
+  - [x] Memory: the shared `FxState` is ~3.1 MiB per engine (mostly the 8 s
+    stereo delay). Per-pattern state would cost ~620 MiB for 200 patterns and
+    ~1.6 GiB for 512 song bars (doubled by the two song snapshot buffers), so it
+    is explicitly rejected.
+  - [x] Tails: shared delay/reverb tails continue across bar changes. Stage and
+    master toggles are hard switches for now; ramps and an optional two-slot
+    crossfade (~6.2 MiB) remain possible later if truly independent tails are
+    wanted.
+  - [x] Persistence/UI: the EFFECTS page edits the active pattern's chain and
+    the normal pattern autosave stores it. `conf/fx.txt` is the fallback for
+    old patterns without FX lines. Loading a slot restores its chain; copying a
+    pattern copies its effects.
+  - [x] Verified by `tools/test-m9.ps1` / `--test-fx` (pattern FX round-trip,
+    legacy fallback, per-bar song FX, per-pattern bounce differences, synced
+    delay timing, bit-identical bypass). Device CPU spot-check remains pending.
 
-## Current state (as of 2026-11-06)
+## Current state (as of 2026-11-07)
 
+- **Version 0.1:** M1–M9.5 implemented; PC and both ARM cross-builds pass the
+  automated suites. Device-only checks (controls, audio latency, effects CPU,
+  device screenshot) remain.
 - Repo: `master`, all work committed (M1/M2 → tooling/packaging → autosave & fixes).
 - Working on PC: full app runs natively (`build/rg808.exe`) with audio + keyboard/gamepad;
   engine and UI validated by automated paths (bounce frame-count math, save/load round
@@ -165,7 +212,8 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
   action menu + letter-picker rename; autosave targets the active slot.
 - Shoulder shortcut layer (post-M7): L1+Left tempo, L1+Right swing, L1+Up
   pattern length, L2+Left pattern library, L2+Right song mode, R1+Left kit
-  selection, R1+Right ratchets; R2 and the remaining combinations reserved.
+  selection, R1+Right ratchets; R2+Up/Left/Down/Right jump to the drive,
+  modulation, delay and reverb FX sections. Remaining combinations are reserved.
   Pressing any shoulder shows a D-pad-shaped hint overlay. L1/R1 no longer
   change tempo directly. Verified by `tools/test-shortcuts.ps1` (headless
   mapping test) plus `--mode l1|l2|r1|r2` hint screenshots.
@@ -179,6 +227,15 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
   live-clock wrap and per-bar song timing, menu/L1+Up editor, dimmed tail
   steps with an end marker. Verified by `tools/test-length.ps1` plus
   `--test-length`.
+- M9 shipped (PC + cross-build): master effects chain drive → modulation →
+  delay → reverb; drive selectable bitcrusher/overdrive/compression,
+  modulation selectable flanger/phaser, free or tempo-synced delay, reverb,
+  bit-identical bypass, menu → EFFECTS page. Verified by `tools/test-m9.ps1` /
+  `--test-fx`; device CPU check pending.
+- M9.5 shipped (PC): per-pattern FX settings stored in each pattern file and
+  carried per bar by song snapshots; one shared DSP state per engine, so fast
+  1-step song bars only update parameters, not effect buffers. `conf/fx.txt`
+  remains the fallback for old patterns. Verified by `tools/test-m9.ps1`.
 - **First real-device session (2026-11-06): the port boots and runs on the SP.**
   Only issue found: D-pad double-fire (fixed in `src/main.c`, rebuilt zip —
   awaiting on-device retest).
@@ -193,6 +250,7 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
 | Cross-toolchain glibc newer than muOS | Open (low): bookworm = glibc 2.36; probe will confirm |
 | No PortMaster control.txt on manual installs | Mitigated: launcher stubs PM helpers, finds its folder, chmods binaries |
 | Small-buffer ALSA crackle on H700 | Open: first device run; tune `desired.samples` / SDL env |
+| Effects CPU at 128-frame periods | Open: PC verified; measure on H700 with all four stages on |
 | CRLF breaking shell scripts | Mitigated: `.gitattributes eol=lf` + `tools/check-eol.ps1` verified all scripts are LF |
 | Button GUID missing on raw joystick path | Mitigated: controller API → raw joystick → keyboard fallbacks; probe + device test will tell |
 | Sample pack licence unclear | Flagged in licenses note before any public release |
@@ -207,12 +265,14 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
    SELECT, L/R) all correct? If clean → swap in a device screenshot, refresh the
    zip, and M3/M5 can close.
 4. Then pick the v2 entry point (proposal: M3 validation → M6 → M7 → M8; M9 anytime).
-   M6/M7/M8/M8.5 are done on PC; M9 (effects) is next, and the device still needs the
-   M6/M7/M8/M8.5 control pass (pattern browser, song page and export, pattern length).
+   M6/M7/M8/M8.5/M9/M9.5 are done on PC; the device still needs the M6–M9.5
+   control/DSP pass (pattern browser, song page and export, pattern length,
+   per-pattern effects CPU).
 5. Device: check the shoulder shortcut layer - L1/L2/R1/R2 hint overlay and the
-   L1+Left/Right/Up, L2+Left/Right and R1+Left/Right mappings. L2/R2 are read
-   from SDL's trigger axes (and raw joystick axes 4/5); R2 currently only shows
-   the reserved hint. If the SP maps them differently, pin it from the device's
+   L1+Left/Right/Up, L2+Left/Right, R1+Left/Right and R2+Up/Left/Down/Right
+   mappings. L2/R2 are read from SDL's trigger axes (and raw joystick axes
+   4/5). If the SP maps them differently, pin it from the device's
    gamecontrollerdb.
 6. Device: play a short song chain and run EXPORT WAV; confirm gapless bar
-   switches, per-bar tempo changes and that `conf/song.wav` plays back cleanly.
+   switches, per-bar tempo changes, effects and that `conf/song.wav` plays back
+   cleanly.
