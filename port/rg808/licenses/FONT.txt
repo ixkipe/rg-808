@@ -1,0 +1,6 @@
+font8x8_basic.h — 8x8 bitmap font
+=================================
+Author: Daniel Hepper (daniel@hepper.net), based on fonts by Marcel Sondaar
+and IBM (public domain VGA fonts).
+License: Public Domain / CC0.
+Source: https://github.com/dhepper/font8x8

@@ -415,7 +415,7 @@ static void handle_key(App *a, SDL_Keycode k)
     case SDLK_LEFT: case SDLK_a:   act(a, ACT_LEFT); break;
     case SDLK_RIGHT: case SDLK_d:  act(a, ACT_RIGHT); break;
     case SDLK_z: case SDLK_RETURN: act(a, ACT_CONFIRM); break;
-    case SDLK_x:                   act(a, ACT_CLEAR); break;
+    case SDLK_x:                   act(a, a->mode == MODE_EDIT ? ACT_CLEAR : ACT_BACK); break;
     case SDLK_c:                   act(a, ACT_HEAR); break;
     case SDLK_SPACE:               act(a, ACT_PLAY); break;
     case SDLK_m: case SDLK_ESCAPE: act(a, ACT_MENU); break;
@@ -427,12 +427,18 @@ static void handle_key(App *a, SDL_Keycode k)
     }
 }
 
+static void row_clear(App *a)
+{
+    for (int s = 0; s < N_STEPS; s++) a->eng.lvl[a->cur_track][s] = 0;
+    set_msg(a, "ROW %s CLEARED", TRACKS[a->cur_track].label);
+}
+
 static void handle_gc_button(App *a, int button, int down)
 {
     if (down) {
         switch (button) {
         case SDL_CONTROLLER_BUTTON_A: act(a, ACT_CONFIRM); break;
-        case SDL_CONTROLLER_BUTTON_B: act(a, ACT_CLEAR); break;
+        case SDL_CONTROLLER_BUTTON_B: act(a, a->mode == MODE_EDIT ? ACT_CLEAR : ACT_BACK); break;
         case SDL_CONTROLLER_BUTTON_X: case SDL_CONTROLLER_BUTTON_Y: act(a, ACT_HEAR); break;
         case SDL_CONTROLLER_BUTTON_START: act(a, ACT_PLAY); break;
         case SDL_CONTROLLER_BUTTON_BACK: act(a, ACT_MENU); break;
@@ -440,26 +446,28 @@ static void handle_gc_button(App *a, int button, int down)
         case SDL_CONTROLLER_BUTTON_DPAD_LEFT: case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: {
             int ad = dir_action(button);
             act(a, ad);
-            if (down) { held_dir = ad; held_since = SDL_GetTicks(); last_auto = held_since; }
-            else if (held_dir == ad) held_dir = 0;
+            held_dir = ad; held_since = SDL_GetTicks(); last_auto = held_since;
             break;
         }
-        case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: g_l_held = 1; act(a, ACT_TEMPO_DOWN); break;
-        case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: g_r_held = 1; act(a, ACT_TEMPO_UP); break;
+        case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+            if (g_r_held) { row_clear(a); }
+            else { g_l_held = 1; act(a, ACT_TEMPO_DOWN); }
+            break;
+        case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+            if (g_l_held) { row_clear(a); }
+            else { g_r_held = 1; act(a, ACT_TEMPO_UP); }
+            break;
         default: break;
         }
     } else {
         switch (button) {
         case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: g_l_held = 0; break;
         case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: g_r_held = 0; break;
+        case SDL_CONTROLLER_BUTTON_DPAD_UP: case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+        case SDL_CONTROLLER_BUTTON_DPAD_LEFT: case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+            if (held_dir == dir_action(button)) held_dir = 0;
+            break;
         default: break;
-        }
-        /* L+R combo: clear current track row */
-        if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
-            if (g_l_held && g_r_held && a->mode == MODE_EDIT) {
-                for (int s = 0; s < N_STEPS; s++) a->eng.lvl[a->cur_track][s] = 0;
-                set_msg(a, "ROW %s CLEARED", TRACKS[a->cur_track].label);
-            }
         }
     }
 }
@@ -469,7 +477,7 @@ static void handle_joy_button(App *a, int button, int down)
     if (!down) return;
     switch (button) {
     case 0: act(a, ACT_CONFIRM); break;       /* A */
-    case 1: act(a, ACT_CLEAR); break;         /* B */
+    case 1: act(a, a->mode == MODE_EDIT ? ACT_CLEAR : ACT_BACK); break;  /* B */
     case 2: act(a, ACT_HEAR); break;          /* X */
     case 3: act(a, ACT_HEAR_ALT); break;      /* Y */
     case 6: act(a, ACT_MENU); break;          /* SELECT */

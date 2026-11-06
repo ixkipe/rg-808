@@ -1,0 +1,34 @@
+{
+  "version": 4,
+  "name": "rg808.zip",
+  "items": [
+    "RG808.sh",
+    "rg808"
+  ],
+  "items_opt": [],
+  "attr": {
+    "title": "RG808",
+    "porter": [
+      "vistor"
+    ],
+    "desc": "A Roland TR-808 style drum machine: 16-step sequencer with 11 classic voices (BD, SD, toms, hats, clave, clap, cowbell, cymbal), per-step accents, sample-accurate timing and pattern save. Built with C and SDL2 for 640x480 handhelds.",
+    "desc_md": null,
+    "inst": "Ready to run out of the box, no additional files needed.",
+    "inst_md": null,
+    "genres": [
+      "music"
+    ],
+    "image": null,
+    "rtr": true,
+    "exp": false,
+    "runtime": [],
+    "store": [],
+    "availability": "full",
+    "reqs": [],
+    "arch": [
+      "aarch64",
+      "armhf"
+    ],
+    "min_glibc": ""
+  }
+}
