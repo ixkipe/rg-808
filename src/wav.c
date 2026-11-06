@@ -68,7 +68,8 @@ int wav_load(const char *path, int target_rate, WavAudio *out)
                 if (bits == 8)        s = ((int)q[0] - 128) / 128.0f;
                 else if (bits == 16)  s = (short)(q[0] | (q[1] << 8)) / 32768.0f;
                 else if (bits == 24)  { int v = (int)(q[0] | (q[1] << 8) | (q[2] << 16));
-                                        if (v & 0x800000) v -= 0x1000000; s = v / 8388608.0f; }
+                                        if (v & 0x800000) v -= 0x1000000;
+                                        s = v / 8388608.0f; }
                 else if (bits == 32)  s = (float)((int)q[0] | ((int)q[1] << 8) | ((int)q[2] << 16) | ((int)q[3] << 24)) / 2147483648.0f;
                 break;
             case 3: /* float */
@@ -121,7 +122,8 @@ int wav_write_stereo16(const char *path, const float *interleaved, int frames, i
     fwrite(h, 1, 44, f);
     for (long i = 0; i < (long)frames * 2; i++) {
         float x = interleaved[i];
-        if (x > 1.0f) x = 1.0f; if (x < -1.0f) x = -1.0f;
+        if (x > 1.0f) x = 1.0f;
+        if (x < -1.0f) x = -1.0f;
         short s = (short)(x * 32767.0f);
         unsigned char b[2] = { (unsigned char)(s & 0xff), (unsigned char)(((unsigned short)s >> 8) & 0xff) };
         fwrite(b, 1, 2, f);

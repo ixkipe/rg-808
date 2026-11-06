@@ -44,6 +44,8 @@ typedef struct {
     char conf_path[1024];
     char msg[48];
     Uint32 msg_until;
+    int dirty;
+    Uint32 last_save;
     SDL_Window *win;
     SDL_Renderer *ren;
     SDL_Texture *tex;
@@ -136,7 +138,8 @@ static int load_pattern(App *a)
     while (fgets(line, sizeof line, f)) {
         if (!strncmp(line, "BPM ", 4)) {
             double bpm = atof(line + 4);
-            if (bpm < 4) bpm = 4; if (bpm > 300) bpm = 300;
+            if (bpm < 4) bpm = 4;
+            if (bpm > 300) bpm = 300;
             a->eng.bpm_x100 = (int)(bpm * 100);
             got_any = 1;
         } else {
@@ -327,6 +330,7 @@ static void do_menu(App *a, int item)
     case 3:
         for (int t = 0; t < N_TRACKS; t++)
             for (int s = 0; s < N_STEPS; s++) a->eng.lvl[t][s] = 0;
+        a->dirty = 1;
         set_msg(a, "PATTERN CLEARED");
         break;
     case 4: a->quit = 1; break;
@@ -347,10 +351,11 @@ static void act(App *a, int act)
         case ACT_CONFIRM: {
             unsigned char lv = (unsigned char)((e->lvl[a->cur_track][a->cur_step] + 1) % 3);
             e->lvl[a->cur_track][a->cur_step] = lv;
+            a->dirty = 1;
             if (lv) engine_preview(e, a->cur_track);
             break;
         }
-        case ACT_CLEAR: e->lvl[a->cur_track][a->cur_step] = LVL_OFF; break;
+        case ACT_CLEAR: e->lvl[a->cur_track][a->cur_step] = LVL_OFF; a->dirty = 1; break;
         case ACT_HEAR:
         case ACT_HEAR_ALT: engine_preview(e, a->cur_track); break;
         case ACT_PLAY:
@@ -358,8 +363,8 @@ static void act(App *a, int act)
             if (e->playing) e->restart = 1;   /* consumed in audio cb */
             break;
         case ACT_MENU: a->mode = MODE_MENU; a->menu_sel = 0; break;
-        case ACT_TEMPO_UP:   e->bpm_x100 += 500; if (e->bpm_x100 > 25000) e->bpm_x100 = 25000; break;
-        case ACT_TEMPO_DOWN: e->bpm_x100 -= 500; if (e->bpm_x100 < 400)  e->bpm_x100 = 400;  break;
+        case ACT_TEMPO_UP:   e->bpm_x100 += 500; if (e->bpm_x100 > 25000) e->bpm_x100 = 25000; a->dirty = 1; break;
+        case ACT_TEMPO_DOWN: e->bpm_x100 -= 500; if (e->bpm_x100 < 400)  e->bpm_x100 = 400;  a->dirty = 1; break;
         default: break;
         }
         break;
@@ -384,6 +389,7 @@ static void act(App *a, int act)
         case ACT_DOWN:       en->bpm_x100 -= 500; break;
         default: break;
         }
+        if (act != ACT_CONFIRM && act != ACT_BACK && act != ACT_MENU && act != ACT_HEAR) a->dirty = 1;
         if (en->bpm_x100 < 400) en->bpm_x100 = 400;
         if (en->bpm_x100 > 25000) en->bpm_x100 = 25000;
         if (act == ACT_CONFIRM || act == ACT_BACK || act == ACT_MENU) a->mode = MODE_EDIT;
@@ -433,6 +439,7 @@ static void handle_key(App *a, SDL_Keycode k)
 static void row_clear(App *a)
 {
     for (int s = 0; s < N_STEPS; s++) a->eng.lvl[a->cur_track][s] = 0;
+    a->dirty = 1;
     set_msg(a, "ROW %s CLEARED", TRACKS[a->cur_track].label);
 }
 
@@ -629,6 +636,7 @@ int main(int argc, char **argv)
 
     /* open any gamepads: prefer mapped controllers, else raw joystick */
     int raw_opened = 0;
+    a.last_save = SDL_GetTicks();
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
         if (SDL_IsGameController(i)) SDL_GameControllerOpen(i);
         else if (!raw_opened && SDL_JoystickOpen(i)) raw_opened = 1;
@@ -666,6 +674,12 @@ int main(int argc, char **argv)
         if (held_dir && (int)(now - held_since) > 350 && (int)(now - last_auto) > 120) {
             last_auto = now;
             act(&a, held_dir);
+        }
+        /* periodic autosave: kills/HOME-exit shouldn't lose the groove */
+        if (a.dirty && (int)(now - a.last_save) > 5000) {
+            save_pattern(&a);
+            a.dirty = 0;
+            a.last_save = now;
         }
         draw_ui(&a);
         present(&a);

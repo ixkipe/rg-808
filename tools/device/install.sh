@@ -27,6 +27,7 @@ cp "$TMP/RG808.sh" "$CARD/ports/"
 SHIMDIR="$CARD/roms/PORTS"; [ -d "$SHIMDIR" ] || SHIMDIR="$CARD/roms/Ports"
 [ -d "$SHIMDIR" ] || { echo "no Ports menu folder in $CARD/roms"; ls "$CARD/roms"; }
 cp "$TMP/RG808.sh" "$SHIMDIR/RG808.sh"
+chmod +x "$SHIMDIR/RG808.sh" "$CARD/ports/RG808.sh" 2>/dev/null
 rm -rf "$TMP"
 
 echo "installed:"
