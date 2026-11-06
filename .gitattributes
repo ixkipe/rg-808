@@ -1,0 +1,19 @@
+# Shell scripts and launchers must stay LF — they run on the device / in Docker.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.gptk text eol=lf
+
+# Normalized source
+*.c text eol=lf
+*.h text eol=lf
+*.json text eol=lf
+*.xml text eol=lf
+CMakeLists.txt text eol=lf
+
+# Binaries
+*.wav binary
+*.png binary
+*.bmp binary
+*.zip binary
+*.dll binary
+*.a binary
