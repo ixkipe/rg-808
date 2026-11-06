@@ -71,15 +71,18 @@ tools\device\probe.sh > probe.txt 2>&1     # in Mustard Terminal
 | B | Clear step (back in menus) |
 | X / Y | Hear sound of the selected track |
 | START | Play / stop |
-| SELECT | Menu (tempo, kits, save, load, clear all, quit) |
+| SELECT | Menu (tempo, swing, ratchets, kits, save, load, clear all, quit) |
 | L / R | Tempo −5 / +5 |
 | L+R | Clear the whole track row |
 
-In **kit mode** (menu → SELECT KITS): D-Pad rows = instruments, columns =
-sample variants (numbered boxes); A selects + auditions, X auditions only,
-B returns. Each voice ships every matching variant from the pack
-(BD/SN: 16, toms: 7, CH: 5, OH: 3, CL: 2, CP: 3, CB: 2, CY: 6).
-Selections are saved with the pattern.
+**Swing**: menu → EDIT SWING; 0–100 % shuffles every even 16th late
+(~67 % ≈ triplet feel). **Ratchets**: menu → RATCHET NOTES turns the grid into
+a roll editor — A cycles each step through 2× / 3× / 4× rolls and flam
+(digit drawn in the cell); in kit mode (menu → SELECT KITS) D-Pad rows =
+instruments, columns = sample variants (numbered boxes); A selects +
+auditions, X auditions only, B returns. Each voice ships every matching
+variant from the pack (BD/SN: 16, toms: 7, CH: 5, OH: 3, CL: 2, CP: 3, CB: 2,
+CY: 6). All selections are saved with the pattern.
 
 Your pattern and tempo are saved automatically on quit (menu: QUIT) and can be
 saved/loaded manually. The file lives in `conf/pattern.txt` inside the port

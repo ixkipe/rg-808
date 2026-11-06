@@ -26,13 +26,16 @@ packaging conventions.
 | B | Clear step (back in menus) |
 | X or Y | Hear selected voice |
 | START | Play / stop |
-| SELECT | Menu (tempo, kits, save, load, clear, quit) |
+| SELECT | Menu (tempo, swing, ratchets, kits, save, load, clear, quit) |
 | L / R | Tempo -5 / +5 |
 | L+R | Clear current track row |
 
-Kit mode (menu -> SELECT KITS): each row is an instrument, the numbered
-columns are that instrument's sample variants. A picks and auditions, X
-auditions, B returns. Pick is saved with the pattern.
+Swing (menu -> EDIT SWING) shuffles every even 16th, 0-100%. Ratchet notes
+(menu -> RATCHET NOTES) turn any step into a 2x / 3x / 4x roll or a flam;
+A cycles the mode, the cell shows its digit. Kit mode (menu -> SELECT KITS):
+each row is an instrument, the numbered columns are that instrument's
+sample variants. A picks and auditions, X auditions, B returns. All picks
+are saved with the pattern.
 
 ## Compile
 

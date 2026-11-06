@@ -68,20 +68,25 @@ launch shims in `<roms>/PORTS/`, port logs in `ports/rg808/log.txt`.
 Ordered so each layer builds on a stable base: step model → pattern storage →
 song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
 
-- [ ] **M6 — Timing & feel** *(todo: swing; ratchet notes)*
-  - **Swing/shuffle**: one global amount (0–100 % of a 16th), delays every even
+- [ ] **M6 — Timing & feel** *(todo: swing; ratchet notes) — done on PC, device check pending*
+  - [x] **Swing/shuffle**: one global amount (0–100 % of a 16th), delays every even
     16th step; applied in the clock math (`next_step += sps` becomes
     alternate long/short). UI: menu → SWING value page (TEMPO-style editor).
-  - **Ratchets**: per-step repeat mode — 1/2 (2 hits), 1/3 (3 hits), 1/4 (4 hits),
-    and flam (2 hits, second at ~10–30 ms offset, quieter). Needs a third step
-    dimension: `unsigned char rch[N_TRACKS][N_STEPS]` + sub-hit scheduling with
-    fixed divisions of the step and roll-decay gains.
-  - UI: RATCHET overlay mode (same picker pattern as KIT mode; small repeat
-    number rendered inside set cells in edit mode).
-  - Persistence: `RCH <label> <16 chars>` lines + `SWING <n>`; old files default
-    to none (backward compatible, same trick as KIT lines).
-  - Risks/acceptance: voice budget (48 may need raising for hat rolls at high
-    BPM), audible machine-gun/flam in bounce tests, device CPU spot-check.
+    Implementation note: hit offset via voice delays; boundaries stay on the
+    straight grid (loop length unchanged, verified by bounce byte size).
+  - [x] **Ratchets**: per-step repeat mode — 1/2 (2 hits), 1/3 (3 hits), 1/4 (4 hits),
+    and flam (2 hits, second at ~14 ms offset, quieter). Third step dimension
+    `unsigned char rch[N_TRACKS][N_STEPS]` + sub-hit scheduling (`fire_sched`);
+    roll hits at full level (decay shaping = later polish). MAX_VOICES raised 48→64.
+  - [x] UI: RATCHET overlay mode (menu → RATCHET NOTES; 16 columns = steps, digit
+    drawn inside set cells in both edit and ratchet views).
+  - [x] Persistence: `RCH <label> <16 chars 0..4>` lines + `SWING <n>`; old files
+    default to none (backward compatible, same trick as KIT lines).
+  - [x] Verified by `tools/test-m6.ps1` (ratchet/swing change bounce audio, length
+    preserved) + `--mode rch` screenshot. During testing **fixed a real bug**:
+    uninitialized pad bytes in the WAV header made `--bounce` files
+    non-deterministic (only affects export tooling, not live playback).
+  - [ ] Device CPU spot-check at 250 BPM with 4× rolls on all 11 tracks.
 - [ ] **M7 — Pattern library** *(todo: save up to 200 patterns)*
   - Storage: `conf/patterns/NNN.txt` (same file format per pattern) + `index.txt`
     (slot → name); atomic writes (temp + rename) against SD power-loss.
@@ -129,6 +134,9 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
   (ARM aarch64 + ARM EABI5 armhf, dynamically linked against system SDL2).
 - Kit selection shipped: every variant family from the pack is selectable per
   voice via the new KIT mode (menu → SELECT KITS).
+- M6 shipped (PC): global swing + per-step ratchets (2/3/4 rolls, flam) with
+  RATCHET/SWING editor modes, persisted via `RCH`/`SWING` lines; WAV export
+  header determinism bug fixed. Device retest needed (dpad fix + M6).
 - **First real-device session (2026-11-06): the port boots and runs on the SP.**
   Only issue found: D-pad double-fire (fixed in `src/main.c`, rebuilt zip —
   awaiting on-device retest).

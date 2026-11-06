@@ -27,7 +27,7 @@
 #define COL_PITCH (CELL_W + 4)          /* 34 */
 #define ROW_PITCH (CELL_H + 6)          /* 36 */
 
-enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_KIT };
+enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_KIT, MODE_RCH, MODE_SWING };
 
 enum Action {
     ACT_NONE, ACT_UP, ACT_DOWN, ACT_LEFT, ACT_RIGHT,
@@ -125,8 +125,14 @@ static int save_pattern(App *a)
         for (int s = 0; s < N_STEPS; s++) fprintf(f, "%d", a->eng.lvl[t][s]);
         fprintf(f, "\n");
     }
+    for (int t = 0; t < N_TRACKS; t++) {
+        fprintf(f, "RCH %s ", TRACKS[t].label);
+        for (int s = 0; s < N_STEPS; s++) fprintf(f, "%d", a->eng.rch[t][s]);
+        fprintf(f, "\n");
+    }
     for (int t = 0; t < N_TRACKS; t++)
         fprintf(f, "KIT %s %d\n", TRACKS[t].label, a->eng.kit[t] + 1);
+    fprintf(f, "SWING %d\n", a->eng.swing_pct);
     fclose(f);
     return 0;
 }
@@ -146,7 +152,13 @@ static int load_pattern(App *a)
             got_any = 1;
         } else {
             char lab[8] = {0};
-            if (!strncmp(line, "KIT ", 4)) {
+            if (!strncmp(line, "SWING ", 6)) {
+                int sw = atoi(line + 6);
+                if (sw < 0) sw = 0;
+                if (sw > 100) sw = 100;
+                a->eng.swing_pct = sw;
+                got_any = 1;
+            } else if (!strncmp(line, "KIT ", 4)) {
                 int idx = 0;
                 if (sscanf(line + 4, "%4s %d", lab, &idx) == 2) {
                     for (int t = 0; t < N_TRACKS; t++) {
@@ -155,6 +167,19 @@ static int load_pattern(App *a)
                             if (cnt && idx < 1) idx = 1;
                             if (cnt && idx > cnt) idx = cnt;
                             if (cnt) a->eng.kit[t] = idx - 1;
+                            break;
+                        }
+                    }
+                }
+            } else if (!strncmp(line, "RCH ", 4)) {
+                if (sscanf(line + 4, "%4s", lab) == 1) {
+                    for (int t = 0; t < N_TRACKS; t++) {
+                        if (!strcmp(lab, TRACKS[t].label)) {
+                            char *p = strchr(line + 4, ' ');
+                            int n = 0;
+                            for (; p && *p; p++)
+                                if (*p >= '0' && *p <= '4' && n < N_STEPS)
+                                    a->eng.rch[t][n++] = (unsigned char)(*p - '0');
                             break;
                         }
                     }
@@ -202,6 +227,10 @@ static void draw_ui(App *a)
     cv_text(c, SCR_W - 230, 10, "TEMPO", 1, C_TEXT_DIM);
     snprintf(tbuf, sizeof tbuf, "%6.2f", e->bpm_x100 / 100.0);
     cv_text(c, SCR_W - 170, 10, tbuf, 1, C_TEXT);
+    if (e->swing_pct > 0) {
+        snprintf(tbuf, sizeof tbuf, "%d%% SWING", e->swing_pct);
+        cv_text(c, SCR_W - 360, 10, tbuf, 1, C_TEXT_DIM);
+    }
 
     /* step LED + beat numbers */
     int led = e->cur_step;
@@ -224,7 +253,7 @@ static void draw_ui(App *a)
     /* track labels */
     for (int t = 0; t < N_TRACKS; t++) {
         int y = GRID_Y0 + t * ROW_PITCH + (CELL_H - 8) / 2;
-        int on_row = (a->mode == MODE_EDIT || a->mode == MODE_KIT) && a->cur_track == t;
+        int on_row = (a->mode == MODE_EDIT || a->mode == MODE_KIT || a->mode == MODE_RCH) && a->cur_track == t;
         cv_rect(c, 8, GRID_Y0 + t * ROW_PITCH, 4, CELL_H, TRACKS[t].color);
         cv_text(c, 22, y, TRACKS[t].label, 1, on_row ? TRACKS[t].color : C_TEXT_DIM);
         if (variant_count(t) > 1) {                  /* current variant number */
@@ -233,7 +262,8 @@ static void draw_ui(App *a)
         }
     }
 
-    /* cells (edit) / variant picker (kit) */
+    /* cells (edit) / variant picker (kit) / ratchet editor (rch) */
+    static const char RCH_CH[RCH_COUNT] = { ' ', '2', '3', '4', 'F' };
     if (a->mode == MODE_KIT) {
         for (int t = 0; t < N_TRACKS; t++) {
             Uint32 col = TRACKS[t].color;
@@ -252,6 +282,26 @@ static void draw_ui(App *a)
                 }
             }
         }
+    } else if (a->mode == MODE_RCH) {
+        for (int t = 0; t < N_TRACKS; t++) {
+            Uint32 col = TRACKS[t].color;
+            for (int s = 0; s < N_STEPS; s++) {
+                int x = GRID_X0 + s * COL_PITCH;
+                int y = GRID_Y0 + t * ROW_PITCH;
+                unsigned char lv = e->lvl[t][s];
+                unsigned char r = e->rch[t][s];
+                Uint32 fill = lv ? (r ? cv_dim(col, 0.55f) : cv_dim(col, 0.25f))
+                                 : cv_dim(col, 0.10f);
+                cv_rect(c, x, y, CELL_W, CELL_H, fill);
+                if (r) {
+                    char dch[2] = { RCH_CH[r], 0 };
+                    cv_text(c, x + (CELL_W - 8) / 2, y + (CELL_H - 8) / 2, dch, 1,
+                            lv ? col : C_TEXT_DIM);
+                }
+                if (s == led && e->playing)
+                    cv_border(c, x, y, CELL_W, CELL_H, 2, C_LED);
+            }
+        }
     } else {
     for (int t = 0; t < N_TRACKS; t++) {
         Uint32 col = TRACKS[t].color;
@@ -259,12 +309,18 @@ static void draw_ui(App *a)
             int x = GRID_X0 + s * COL_PITCH;
             int y = GRID_Y0 + t * ROW_PITCH;
             unsigned char lv = e->lvl[t][s];
+            unsigned char r = e->rch[t][s];
             Uint32 fill = lv == LVL_OFF ? cv_dim(col, 0.20f)
                         : lv == LVL_ON  ? cv_dim(col, 0.65f)
                                         : col;
             cv_rect(c, x, y, CELL_W, CELL_H, fill);
             if (lv == LVL_ACC)
                 cv_border(c, x + 5, y + 5, CELL_W - 10, CELL_H - 10, 2, C_ACCENT);
+            if (lv > LVL_OFF && r > RCH_OFF) {
+                char dch[2] = { RCH_CH[r], 0 };
+                cv_text(c, x + (CELL_W - 8) / 2, y + CELL_H - 10, dch, 1,
+                        lv == LVL_ACC ? 0x000000u : C_TEXT);
+            }
             /* playing column highlight */
             if (s == led && e->playing)
                 cv_border(c, x, y, CELL_W, CELL_H, 2, C_LED);
@@ -273,7 +329,7 @@ static void draw_ui(App *a)
     }
 
     /* cursor */
-    if (a->mode == MODE_EDIT || a->mode == MODE_KIT) {
+    if (a->mode == MODE_EDIT || a->mode == MODE_KIT || a->mode == MODE_RCH) {
         int x = GRID_X0 + a->cur_step * COL_PITCH;
         int y = GRID_Y0 + a->cur_track * ROW_PITCH;
         cv_border(c, x - 2, y - 2, CELL_W + 4, CELL_H + 4, 2, C_CURSOR);
@@ -290,12 +346,17 @@ static void draw_ui(App *a)
         cv_text(c, 10, SCR_H - 14, a->msg, 1, C_TEXT);
     else if (a->mode == MODE_KIT)
         cv_text(c, 10, SCR_H - 14, "A:SELECT+HEAR  X:HEAR  B:BACK  START:PLAY", 1, C_TEXT_DIM);
+    else if (a->mode == MODE_RCH)
+        cv_text(c, 10, SCR_H - 14, "A:ROLL 2/3/4/F  X:HEAR  B:CLEAR ROLL  SELECT:BACK", 1, C_TEXT_DIM);
     else
         cv_text(c, 10, SCR_H - 14, "A:STEP  B:CLEAR  X:HEAR  START:PLAY  SELECT:MENU  L/R:TEMPO", 1, C_TEXT_DIM);
 
     if (a->mode == MODE_MENU) {
-        static const char *items[] = { "EDIT TEMPO", "SELECT KITS", "SAVE PATTERN", "LOAD PATTERN", "CLEAR ALL", "QUIT" };
-        int n = 6;
+        static const char *items[] = {
+            "EDIT TEMPO", "EDIT SWING", "RATCHET NOTES", "SELECT KITS",
+            "SAVE PATTERN", "LOAD PATTERN", "CLEAR ALL", "QUIT"
+        };
+        int n = 8;
         int mw = 240, mh = 16 * n + 34;
         int mx = (SCR_W - mw) / 2, my = (SCR_H - mh) / 2;
         cv_rect(c, mx, my, mw, mh, C_PANEL);
@@ -315,7 +376,16 @@ static void draw_ui(App *a)
         cv_text(c, mx + 12, my + 10, "TEMPO", 1, C_TEXT);
         snprintf(tbuf, sizeof tbuf, "%.2f BPM", e->bpm_x100 / 100.0);
         cv_text(c, mx + 12, my + 34, tbuf, 2, C_TEXT);
-        cv_text(c, mx + 12, my + 62, "L/R:-5  R/L:+5  UD:-5/+5  A/B:BACK", 1, C_TEXT_DIM);
+        cv_text(c, mx + 12, my + 62, "UD:+-5  LR:+-0.5  L/R:+-5  A/B:OK", 1, C_TEXT_DIM);
+    } else if (a->mode == MODE_SWING) {
+        int mw = 300, mh = 80;
+        int mx = (SCR_W - mw) / 2, my = (SCR_H - mh) / 2;
+        cv_rect(c, mx, my, mw, mh, C_PANEL);
+        cv_border(c, mx, my, mw, mh, 2, C_TEXT);
+        cv_text(c, mx + 12, my + 10, "SWING / SHUFFLE", 1, C_TEXT);
+        snprintf(tbuf, sizeof tbuf, "%d%%", e->swing_pct);
+        cv_text(c, mx + 12, my + 34, tbuf, 2, C_TEXT);
+        cv_text(c, mx + 12, my + 62, "UD:+-1  LR:+-5  L/R:+-10  A/B:OK", 1, C_TEXT_DIM);
     }
 }
 
@@ -371,21 +441,26 @@ static void do_menu(App *a, int item)
 {
     switch (item) {
     case 0: a->mode = MODE_TEMPO; break;
-    case 1:
+    case 1: a->mode = MODE_SWING; break;
+    case 2: a->mode = MODE_RCH; break;
+    case 3:
         a->mode = MODE_KIT;
         a->cur_step = a->eng.kit[a->cur_track];   /* land cursor on current pick */
         break;
-    case 2: set_msg(a, save_pattern(a) == 0 ? "PATTERN SAVED" : "SAVE FAILED"); break;
-    case 3: set_msg(a, load_pattern(a) == 0 ? "PATTERN LOADED" : "NO SAVED PATTERN"); break;
-    case 4:
+    case 4: set_msg(a, save_pattern(a) == 0 ? "PATTERN SAVED" : "SAVE FAILED"); break;
+    case 5: set_msg(a, load_pattern(a) == 0 ? "PATTERN LOADED" : "NO SAVED PATTERN"); break;
+    case 6:
         for (int t = 0; t < N_TRACKS; t++)
-            for (int s = 0; s < N_STEPS; s++) a->eng.lvl[t][s] = 0;
+            for (int s = 0; s < N_STEPS; s++) {
+                a->eng.lvl[t][s] = 0;
+                a->eng.rch[t][s] = 0;
+            }
         a->dirty = 1;
         set_msg(a, "PATTERN CLEARED");
         break;
-    case 5: a->quit = 1; break;
+    case 7: a->quit = 1; break;
     }
-    if (item != 0 && item != 1) a->mode = MODE_EDIT;
+    if (item > 3) a->mode = MODE_EDIT;
 }
 
 static void act(App *a, int act)
@@ -402,12 +477,16 @@ static void act(App *a, int act)
             unsigned char lv = (unsigned char)((e->lvl[a->cur_track][a->cur_step] + 1) % 3);
             e->lvl[a->cur_track][a->cur_step] = lv;
             a->dirty = 1;
-            if (lv) engine_preview(e, a->cur_track, e->kit[a->cur_track]);
+            if (lv) engine_preview(e, a->cur_track, e->kit[a->cur_track],
+                                   e->rch[a->cur_track][a->cur_step], lv);
             break;
         }
         case ACT_CLEAR: e->lvl[a->cur_track][a->cur_step] = LVL_OFF; a->dirty = 1; break;
         case ACT_HEAR:
-        case ACT_HEAR_ALT: engine_preview(e, a->cur_track, e->kit[a->cur_track]); break;
+        case ACT_HEAR_ALT:
+            engine_preview(e, a->cur_track, e->kit[a->cur_track],
+                           e->rch[a->cur_track][a->cur_step], LVL_ON);
+            break;
         case ACT_PLAY:
             e->playing ^= 1;
             if (e->playing) e->restart = 1;   /* consumed in audio cb */
@@ -420,8 +499,8 @@ static void act(App *a, int act)
         break;
     case MODE_MENU:
         switch (act) {
-        case ACT_UP:    a->menu_sel = (a->menu_sel + 5) % 6; break;
-        case ACT_DOWN:  a->menu_sel = (a->menu_sel + 1) % 6; break;
+        case ACT_UP:    a->menu_sel = (a->menu_sel + 7) % 8; break;
+        case ACT_DOWN:  a->menu_sel = (a->menu_sel + 1) % 8; break;
         case ACT_CONFIRM: do_menu(a, a->menu_sel); break;
         case ACT_BACK:
         case ACT_MENU:  a->mode = MODE_EDIT; break;
@@ -448,11 +527,11 @@ static void act(App *a, int act)
             break;
         case ACT_CONFIRM:
             if (cnt > 0) { e->kit[t] = a->cur_step; a->dirty = 1; }
-            engine_preview(e, t, a->cur_step);
+            engine_preview(e, t, a->cur_step, RCH_OFF, LVL_ACC);
             break;
         case ACT_HEAR:
         case ACT_HEAR_ALT:
-            engine_preview(e, t, a->cur_step);
+            engine_preview(e, t, a->cur_step, RCH_OFF, LVL_ACC);
             break;
         case ACT_PLAY:
             e->playing ^= 1;
@@ -479,6 +558,58 @@ static void act(App *a, int act)
         if (en->bpm_x100 < 400) en->bpm_x100 = 400;
         if (en->bpm_x100 > 25000) en->bpm_x100 = 25000;
         if (act == ACT_CONFIRM || act == ACT_BACK || act == ACT_MENU) a->mode = MODE_EDIT;
+        break;
+    }
+    case MODE_SWING: {
+        Engine *en = &a->eng;
+        switch (act) {
+        case ACT_TEMPO_UP:   en->swing_pct += 10; break;
+        case ACT_TEMPO_DOWN: en->swing_pct -= 10; break;
+        case ACT_RIGHT:      en->swing_pct += 5;  break;
+        case ACT_LEFT:       en->swing_pct -= 5;  break;
+        case ACT_UP:         en->swing_pct += 1;  break;
+        case ACT_DOWN:       en->swing_pct -= 1;  break;
+        default: break;
+        }
+        if (act != ACT_CONFIRM && act != ACT_BACK && act != ACT_MENU && act != ACT_HEAR) {
+            if (en->swing_pct < 0) en->swing_pct = 0;
+            if (en->swing_pct > 100) en->swing_pct = 100;
+            a->dirty = 1;
+        }
+        if (act == ACT_CONFIRM || act == ACT_BACK || act == ACT_MENU) a->mode = MODE_EDIT;
+        break;
+    }
+    case MODE_RCH: {
+        int t = a->cur_track;
+        switch (act) {
+        case ACT_UP:    a->cur_track = (t + N_TRACKS - 1) % N_TRACKS; break;
+        case ACT_DOWN:  a->cur_track = (t + 1) % N_TRACKS; break;
+        case ACT_LEFT:  a->cur_step = (a->cur_step + N_STEPS - 1) % N_STEPS; break;
+        case ACT_RIGHT: a->cur_step = (a->cur_step + 1) % N_STEPS; break;
+        case ACT_CONFIRM: {
+            unsigned char r = (unsigned char)((e->rch[t][a->cur_step] + 1) % RCH_COUNT);
+            e->rch[t][a->cur_step] = r;
+            a->dirty = 1;
+            engine_preview(e, t, e->kit[t], r,
+                           e->lvl[t][a->cur_step] ? e->lvl[t][a->cur_step] : LVL_ON);
+            break;
+        }
+        case ACT_CLEAR:
+            if (e->rch[t][a->cur_step]) { e->rch[t][a->cur_step] = RCH_OFF; a->dirty = 1; }
+            break;
+        case ACT_HEAR:
+        case ACT_HEAR_ALT:
+            engine_preview(e, t, e->kit[t], e->rch[t][a->cur_step],
+                           e->lvl[t][a->cur_step] ? e->lvl[t][a->cur_step] : LVL_ON);
+            break;
+        case ACT_PLAY:
+            e->playing ^= 1;
+            if (e->playing) e->restart = 1;
+            break;
+        case ACT_MENU: a->mode = MODE_EDIT; break;   /* SELECT backs out of the grid modes */
+        case ACT_BACK: a->mode = MODE_EDIT; break;
+        default: break;
+        }
         break;
     }
     default: break;
@@ -533,7 +664,7 @@ static void handle_key(App *a, SDL_Keycode k)
     case SDLK_LEFT: case SDLK_a:   act(a, ACT_LEFT); break;
     case SDLK_RIGHT: case SDLK_d:  act(a, ACT_RIGHT); break;
     case SDLK_z: case SDLK_RETURN: act(a, ACT_CONFIRM); break;
-    case SDLK_x:                   act(a, a->mode == MODE_EDIT ? ACT_CLEAR : ACT_BACK); break;
+    case SDLK_x:                   act(a, (a->mode == MODE_EDIT || a->mode == MODE_RCH) ? ACT_CLEAR : ACT_BACK); break;
     case SDLK_c:                   act(a, ACT_HEAR); break;
     case SDLK_SPACE:               act(a, ACT_PLAY); break;
     case SDLK_m: case SDLK_ESCAPE: act(a, ACT_MENU); break;
@@ -557,7 +688,7 @@ static void handle_gc_button(App *a, int button, int down)
     if (down) {
         switch (button) {
         case SDL_CONTROLLER_BUTTON_A: act(a, ACT_CONFIRM); break;
-        case SDL_CONTROLLER_BUTTON_B: act(a, a->mode == MODE_EDIT ? ACT_CLEAR : ACT_BACK); break;
+        case SDL_CONTROLLER_BUTTON_B: act(a, (a->mode == MODE_EDIT || a->mode == MODE_RCH) ? ACT_CLEAR : ACT_BACK); break;
         case SDL_CONTROLLER_BUTTON_X: case SDL_CONTROLLER_BUTTON_Y: act(a, ACT_HEAR); break;
         case SDL_CONTROLLER_BUTTON_START: act(a, ACT_PLAY); break;
         case SDL_CONTROLLER_BUTTON_BACK: act(a, ACT_MENU); break;
@@ -597,7 +728,7 @@ static void handle_joy_button(App *a, int button, int down)
     if (!down) return;
     switch (button) {
     case 0: act(a, ACT_CONFIRM); break;       /* A */
-    case 1: act(a, a->mode == MODE_EDIT ? ACT_CLEAR : ACT_BACK); break;  /* B */
+    case 1: act(a, (a->mode == MODE_EDIT || a->mode == MODE_RCH) ? ACT_CLEAR : ACT_BACK); break;  /* B */
     case 2: act(a, ACT_HEAR); break;          /* X */
     case 3: act(a, ACT_HEAR_ALT); break;      /* Y */
     case 6: act(a, ACT_MENU); break;          /* SELECT */
@@ -750,6 +881,8 @@ int main(int argc, char **argv)
         /* one UI frame -> BMP */
         if (mode_arg) {
             if (!strcmp(mode_arg, "kit"))   { a.mode = MODE_KIT; a.cur_step = a.eng.kit[a.cur_track]; }
+            else if (!strcmp(mode_arg, "rch"))   a.mode = MODE_RCH;
+            else if (!strcmp(mode_arg, "swing")) a.mode = MODE_SWING;
             else if (!strcmp(mode_arg, "menu"))  a.mode = MODE_MENU;
             else if (!strcmp(mode_arg, "tempo")) a.mode = MODE_TEMPO;
         }

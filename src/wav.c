@@ -112,7 +112,7 @@ int wav_write_stereo16(const char *path, const float *interleaved, int frames, i
     if (!f) return -1;
     unsigned int data = (unsigned)frames * 4u;
     unsigned int riff = 36u + data;
-    unsigned char h[44];
+    unsigned char h[44] = {0};
     memcpy(h, "RIFF", 4); h[4]=riff; h[5]=riff>>8; h[6]=riff>>16; h[7]=riff>>24;
     memcpy(h+8, "WAVEfmt ", 8);
     h[16]=16; h[20]=1; h[22]=2; h[24]=rate; h[25]=rate>>8; h[26]=rate>>16; h[27]=rate>>24;

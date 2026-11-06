@@ -69,13 +69,50 @@ static void fire(Engine *e, int track, int variant, float level_gain, int delay)
     e->voice_fire[v - e->voices] = e->total_pos;
 }
 
-/* Play one track/variant now (preview); consumed by audio callback. */
-void engine_preview(Engine *e, int track, int variant)
+/* Play one track now with a ratchet pattern (preview); consumed by audio callback. */
+void engine_preview(Engine *e, int track, int variant, int rch, int lvl)
 {
     if (track >= 0 && track < N_TRACKS) {
         e->preview_variant = variant;
+        e->preview_rch = rch;
+        e->preview_lvl = lvl;
         e->preview_track = track + 1;
     }
+}
+
+/* Schedule hit(s) for one voice: straight, ratchet roll (2/3/4 even subs) or
+ * flam (quiet grace at the boundary, main ~14 ms later). Delays may exceed the
+ * current buffer — voices carry their delay across callbacks. */
+static void fire_sched(Engine *e, int track, int variant, float gain, int delay, int rch)
+{
+    double sps = samples_per_step(e);
+    switch (rch) {
+    case RCH_2:
+        for (int k = 0; k < 2; k++) fire(e, track, variant, gain, delay + (int)(k * sps / 2.0));
+        return;
+    case RCH_3:
+        for (int k = 0; k < 3; k++) fire(e, track, variant, gain, delay + (int)(k * sps / 3.0));
+        return;
+    case RCH_4:
+        for (int k = 0; k < 4; k++) fire(e, track, variant, gain, delay + (int)(k * sps / 4.0));
+        return;
+    case RCH_FLAM:
+        fire(e, track, variant, gain * 0.5f, delay);
+        fire(e, track, variant, gain, delay + (int)(0.014 * e->rate));
+        return;
+    default:
+        fire(e, track, variant, gain, delay);
+        return;
+    }
+}
+
+/* Swing: odd 16ths land late by swing_pct/100 * half a step (100 % = full shuffle). */
+static int swing_delay(const Engine *e, int step, double sps)
+{
+    int pct = e->swing_pct;
+    if (pct <= 0 || (step & 1) == 0) return 0;
+    if (pct > 100) pct = 100;
+    return (int)(sps * 0.5 * (pct / 100.0));
 }
 
 void engine_restart(Engine *e)
@@ -89,7 +126,7 @@ void engine_fire_step(Engine *e, int step)
     for (int t = 0; t < N_TRACKS; t++) {
         unsigned char lv = e->lvl[t][step];
         if (lv > LVL_OFF)
-            fire(e, t, e->kit[t], LVL_GAIN[lv], 0);
+            fire_sched(e, t, e->kit[t], LVL_GAIN[lv], 0, e->rch[t][step]);
     }
 }
 
@@ -100,8 +137,11 @@ void engine_mix(Engine *e, float *dst, int frames)
     if (e->preview_track) {
         int t = e->preview_track - 1;
         int v = e->preview_variant;
+        int r = e->preview_rch;
+        int l = e->preview_lvl;
         e->preview_track = 0;
-        if (t >= 0 && t < N_TRACKS) fire(e, t, v, LVL_GAIN[LVL_ACC], 0);
+        if (t >= 0 && t < N_TRACKS)
+            fire_sched(e, t, v, LVL_GAIN[l == LVL_OFF ? LVL_ACC : l], 0, r);
     }
 
     if (e->playing) {
@@ -111,9 +151,10 @@ void engine_mix(Engine *e, float *dst, int frames)
             int at = (int)(e->next_step - (double)e->total_pos);
             if (at < 0) at = 0;
             e->step = (e->step + 1) % N_STEPS;
+            at += swing_delay(e, e->step, sps);
             for (int t = 0; t < N_TRACKS; t++) {
                 unsigned char lv = e->lvl[t][e->step];
-                if (lv > LVL_OFF) fire(e, t, e->kit[t], LVL_GAIN[lv], at);
+                if (lv > LVL_OFF) fire_sched(e, t, e->kit[t], LVL_GAIN[lv], at, e->rch[t][e->step]);
             }
             e->next_step += sps;
         }
