@@ -58,6 +58,62 @@ launch shims in `<roms>/PORTS/`, port logs in `ports/rg808/log.txt`.
   - [ ] Optional: upstream PR to PortsMaster/PortMaster-New (requires their Discord
     testing thread + multi-CFW testing; not needed for personal use)
 
+## v2 feature milestones (grouped from `todo.md` — planned, not started)
+
+Ordered so each layer builds on a stable base: step model → pattern storage →
+song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
+
+- [ ] **M6 — Timing & feel** *(todo: swing; ratchet notes)*
+  - **Swing/shuffle**: one global amount (0–100 % of a 16th), delays every even
+    16th step; applied in the clock math (`next_step += sps` becomes
+    alternate long/short). UI: menu → SWING value page (TEMPO-style editor).
+  - **Ratchets**: per-step repeat mode — 1/2 (2 hits), 1/3 (3 hits), 1/4 (4 hits),
+    and flam (2 hits, second at ~10–30 ms offset, quieter). Needs a third step
+    dimension: `unsigned char rch[N_TRACKS][N_STEPS]` + sub-hit scheduling with
+    fixed divisions of the step and roll-decay gains.
+  - UI: RATCHET overlay mode (same picker pattern as KIT mode; small repeat
+    number rendered inside set cells in edit mode).
+  - Persistence: `RCH <label> <16 chars>` lines + `SWING <n>`; old files default
+    to none (backward compatible, same trick as KIT lines).
+  - Risks/acceptance: voice budget (48 may need raising for hat rolls at high
+    BPM), audible machine-gun/flam in bounce tests, device CPU spot-check.
+- [ ] **M7 — Pattern library** *(todo: save up to 200 patterns)*
+  - Storage: `conf/patterns/NNN.txt` (same file format per pattern) + `index.txt`
+    (slot → name); atomic writes (temp + rename) against SD power-loss.
+  - Import migration of the legacy single `pattern.txt` into slot 001 on first run.
+  - UI: PATTERN browser — numbered grid/list with names; load (A), overwrite-save
+    current (menu), delete/copy, D-pad letter-picker rename (optional if fiddly).
+  - Autosave retargets to the active slot; slot number shown in header.
+  - Risks/acceptance: 200 × tiny files (negligible), browse-edit-save-reload
+    round-trip test, crash-safety (never lose the last edit beyond ~5 s).
+- [ ] **M8 — Song mode** *(todo: chain up to 512 patterns; save song as WAV) — requires M7*
+  - Song data: ordered chain of pattern slots (1 bar per entry, up to 512 entries);
+    per-pattern BPM applies on each switch (bpm lives with the pattern, as today).
+  - Engine: at loop boundary, audio thread swaps the pattern snapshot pointer
+    (double-buffered snapshot set prepared by UI thread — first real data-structure
+    change of the engine, keep the race-free design).
+  - UI: SONG page — list editor (pattern number per bar, insert/delete/shift,
+    jump-to-playbar).
+  - **WAV export**: streaming renderer (chunk loop writing straight to the file —
+    today's `--bounce` holds the whole render in RAM, which would explode for a
+    512-bar song); progress bar; output 44.1 k/16 stereo.
+  - Risks/acceptance: song length math, gapless pattern switches at 250 BPM,
+    export bit-exact vs live playback on the first 4 bars.
+- [ ] **M9 — Effects** *(todo: compression/overdrive/distortion — one; flanger/phaser —
+  one; delay; reverb) — independent of M6–M8, last because of CPU risk*
+  - Scope per the "either/or" note: master chain
+    `distortion → flanger → delay → reverb → master` (fixed order, per-stage on/off
+    + params), float, simple algorithms first (delay: circular buffer; reverb:
+    2–4 comb + damp; flanger: LFO 1-tap; distortion: soft-clip/saturation).
+  - Per-voice sends are explicitly out of scope for the first pass.
+  - UI: FX menu page (parameter editor reusing the TEMPO page component);
+    global bypass; `FX ...` config line(s) persisted.
+  - Risks/acceptance: measured CPU headroom on the H700 at 128-frame periods,
+    no dropouts with all four stages on, bypass = bit-identical to pre-M9 render.
+- [ ] **M10 — Ergonomics & machine feel** *(older backlog, grab-bag, reorderable)*
+  - Per-track volume/mute, accent-driven BD decay (true 808 behaviour, not just
+    gain), master volume UI, per-track pan maybe.
+
 ## Current state (as of 2026-11-06)
 
 - Repo: `master`, all work committed (M1/M2 → tooling/packaging → autosave & fixes).
@@ -90,5 +146,6 @@ launch shims in `<roms>/PORTS/`, port logs in `ports/rg808/log.txt`.
    install via `tools/deploy.ps1 <ip>` or `tools/device/install.sh`.
 3. First-launch feedback: video correct? audio latency/cleanliness? buttons? Then tune.
 4. Swap in a device screenshot; final zip refresh (`tools/package-port.ps1`).
-5. v2 backlog (post-1.0): per-track volumes/mutes, multiple
-   patterns/slots, accent-driven decay (BD machine feel), pattern chain, master volume UI.
+5. v2 feature development: **not started** — scope and sequencing for the
+   `todo.md` items live in milestones M6–M10 above; confirm priority when we
+   pick the first one (proposal: M3 device validation → M6 → M7 → M8, M9 anytime).
