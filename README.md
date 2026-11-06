@@ -35,7 +35,7 @@ Esc/Backspace=SELECT-menu, [/]=L/R tempo, Q=quit.
 Requires Docker Desktop (or any docker):
 ```
 docker build -t rg808build tools/portmaster-build
-docker run --rm -v %cd%:/src rg808build        # -> dist/rg808.zip
+docker run --rm -v ${PWD}:/src rg808build      # -> dist/rg808.zip  (PowerShell)
 ```
 The container cross-compiles `rg808.aarch64` + `rg808.armhf` against Debian's
 SDL2 (the device ships its own libSDL2 at runtime; both arch binaries are
