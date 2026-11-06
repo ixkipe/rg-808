@@ -19,12 +19,16 @@ const TrackInfo TRACKS[N_TRACKS] = {
 
 static const float LVL_GAIN[3] = { 0.0f, 0.72f, 1.0f };
 
+static double samples_per_step_bpm(int rate, int bpm_x100)
+{
+    if (bpm_x100 < 100) bpm_x100 = 100;   /* 1.00 bpm floor */
+    double bpm = bpm_x100 / 100.0;
+    return (double)rate * 60.0 / (bpm * 4.0);   /* 16th note */
+}
+
 static double samples_per_step(const Engine *e)
 {
-    int bx = e->bpm_x100;
-    if (bx < 100) bx = 100;               /* 1.00 bpm floor */
-    double bpm = bx / 100.0;
-    return (double)e->rate * 60.0 / (bpm * 4.0);   /* 16th note */
+    return samples_per_step_bpm(e->rate, e->bpm_x100);
 }
 
 void engine_init(Engine *e, int rate)
@@ -34,6 +38,7 @@ void engine_init(Engine *e, int rate)
     e->master = 0.72f;
     e->cur_step = -1;
     e->bpm_x100 = 12000;
+    e->length = N_STEPS;
     e->next_step = 0;
     for (int t = 0; t < N_TRACKS; t++) e->kit[t] = TRACKS[t].dflt - 1;
 }
@@ -83,9 +88,8 @@ void engine_preview(Engine *e, int track, int variant, int rch, int lvl)
 /* Schedule hit(s) for one voice: straight, ratchet roll (2/3/4 even subs) or
  * flam (quiet grace at the boundary, main ~14 ms later). Delays may exceed the
  * current buffer — voices carry their delay across callbacks. */
-static void fire_sched(Engine *e, int track, int variant, float gain, int delay, int rch)
+static void fire_sched(Engine *e, int track, int variant, float gain, int delay, int rch, double sps)
 {
-    double sps = samples_per_step(e);
     switch (rch) {
     case RCH_2:
         for (int k = 0; k < 2; k++) fire(e, track, variant, gain, delay + (int)(k * sps / 2.0));
@@ -107,9 +111,8 @@ static void fire_sched(Engine *e, int track, int variant, float gain, int delay,
 }
 
 /* Swing: odd 16ths land late by swing_pct/100 * half a step (100 % = full shuffle). */
-static int swing_delay(const Engine *e, int step, double sps)
+static int swing_delay_pct(int pct, int step, double sps)
 {
-    int pct = e->swing_pct;
     if (pct <= 0 || (step & 1) == 0) return 0;
     if (pct > 100) pct = 100;
     return (int)(sps * 0.5 * (pct / 100.0));
@@ -119,14 +122,99 @@ void engine_restart(Engine *e)
 {
     e->step = -1;
     e->next_step = (double)e->total_pos;
+    if (e->song_playing) {
+        int count = e->song_set ? e->song_set->count : 0;
+        int bar = e->song_start_bar;
+        if (bar < 0) bar = 0;
+        if (bar >= count) bar = count > 0 ? count - 1 : 0;
+        e->song_bar = bar;
+        e->song_done = 0;
+    }
 }
 
 void engine_fire_step(Engine *e, int step)
 {
+    double sps = samples_per_step(e);
     for (int t = 0; t < N_TRACKS; t++) {
         unsigned char lv = e->lvl[t][step];
         if (lv > LVL_OFF)
-            fire_sched(e, t, e->kit[t], LVL_GAIN[lv], 0, e->rch[t][step]);
+            fire_sched(e, t, e->kit[t], LVL_GAIN[lv], 0, e->rch[t][step], sps);
+    }
+}
+
+void engine_song_start(Engine *e, const SongSet *set, int loop, int start_bar)
+{
+    if (!set || set->count <= 0) return;
+    e->song_set = set;
+    e->song_loop = loop ? 1 : 0;
+    e->song_start_bar = start_bar;
+    e->song_playing = 1;
+    e->song_done = 0;
+    e->playing = 1;
+    e->restart = 1;
+}
+
+void engine_song_stop(Engine *e)
+{
+    e->song_playing = 0;
+    e->song_done = 0;
+}
+
+void engine_song_set_loop(Engine *e, int loop)
+{
+    e->song_loop = loop ? 1 : 0;
+}
+
+/* Advance the song clock through one buffer. Per-bar BPM/swing come from the
+ * immutable snapshot, so pattern changes are gapless at the bar boundary. */
+static void mix_song_steps(Engine *e, int frames)
+{
+    const SongSet *set = (const SongSet *)e->song_set;
+    int count = set ? set->count : 0;
+    if (count <= 0) {
+        e->song_playing = 0;
+        e->playing = 0;
+        return;
+    }
+    if (e->song_bar < 0 || e->song_bar >= count) e->song_bar = 0;
+
+    double end = (double)(e->total_pos + (unsigned long long)frames);
+    while (e->next_step <= end) {
+        int at = (int)(e->next_step - (double)e->total_pos);
+        if (at < 0) at = 0;
+
+        /* Advance within the current bar. The bar length comes from that
+         * bar's snapshot, so patterns of different lengths chain gaplessly. */
+        const PatternSnapshot *sp = &set->pat[e->song_bar];
+        int len = engine_length_clamp(sp->length);
+        e->step++;
+        if (e->step >= len) {
+            e->step = 0;
+            e->song_bar++;
+            if (e->song_bar >= count) {
+                if (e->song_loop) {
+                    e->song_bar = 0;
+                } else {
+                    e->song_bar = count - 1;
+                    e->song_playing = 0;
+                    e->playing = 0;
+                    e->song_done = 1;
+                    e->cur_step = -1;
+                    break;
+                }
+            }
+            sp = &set->pat[e->song_bar];
+        }
+
+        double sps = samples_per_step_bpm(e->rate, sp->bpm_x100);
+        int delay = at + swing_delay_pct(sp->swing_pct, e->step, sps);
+        for (int t = 0; t < N_TRACKS; t++) {
+            unsigned char lv = sp->lvl[t][e->step];
+            if (lv > LVL_OFF)
+                fire_sched(e, t, sp->kit[t], LVL_GAIN[lv], delay,
+                           sp->rch[t][e->step], sps);
+        }
+        e->next_step += sps;
     }
 }
 
@@ -141,27 +229,42 @@ void engine_mix(Engine *e, float *dst, int frames)
         int l = e->preview_lvl;
         e->preview_track = 0;
         if (t >= 0 && t < N_TRACKS)
-            fire_sched(e, t, v, LVL_GAIN[l == LVL_OFF ? LVL_ACC : l], 0, r);
+            fire_sched(e, t, v, LVL_GAIN[l == LVL_OFF ? LVL_ACC : l], 0, r, samples_per_step(e));
     }
 
-    if (e->playing) {
-        double sps = samples_per_step(e);
-        /* fire any step boundaries falling inside this buffer */
-        while (e->next_step <= (double)(e->total_pos + (unsigned long long)frames)) {
-            int at = (int)(e->next_step - (double)e->total_pos);
-            if (at < 0) at = 0;
-            e->step = (e->step + 1) % N_STEPS;
-            at += swing_delay(e, e->step, sps);
-            for (int t = 0; t < N_TRACKS; t++) {
-                unsigned char lv = e->lvl[t][e->step];
-                if (lv > LVL_OFF) fire_sched(e, t, e->kit[t], LVL_GAIN[lv], at, e->rch[t][e->step]);
+    /* Cache the mode at buffer start: the UI may stop/start between callbacks,
+     * but this buffer should stay on one path. */
+    int playing = e->playing;
+    int song = e->song_playing;
+
+    if (playing) {
+        if (song) {
+            mix_song_steps(e, frames);
+            e->cur_step = e->playing ? (e->step < 0 ? 0 : e->step) : -1;
+        } else {
+            double sps = samples_per_step(e);
+            int len = engine_length_clamp(e->length);
+            /* fire any step boundaries falling inside this buffer */
+            while (e->next_step <= (double)(e->total_pos + (unsigned long long)frames)) {
+                int at = (int)(e->next_step - (double)e->total_pos);
+                if (at < 0) at = 0;
+                e->step++;
+                if (e->step >= len) e->step = 0;
+                at += swing_delay_pct(e->swing_pct, e->step, sps);
+                for (int t = 0; t < N_TRACKS; t++) {
+                    unsigned char lv = e->lvl[t][e->step];
+                    if (lv > LVL_OFF)
+                        fire_sched(e, t, e->kit[t], LVL_GAIN[lv], at,
+                                   e->rch[t][e->step], sps);
+                }
+                e->next_step += sps;
             }
-            e->next_step += sps;
+            e->cur_step = e->step < 0 ? 0 : e->step;
         }
-        e->cur_step = e->step < 0 ? 0 : e->step;
     } else {
         e->cur_step = -1;
         e->next_step = (double)e->total_pos + samples_per_step(e);
+        if (e->song_playing) e->song_playing = 0;
     }
 
     /* render active voices into the buffer (mono sum duplicated to stereo) */
@@ -195,4 +298,5 @@ void engine_mix(Engine *e, float *dst, int frames)
     }
 
     e->total_pos += (unsigned long long)frames;
+    e->mix_count++;
 }

@@ -15,6 +15,7 @@
 #include "wav.h"
 #include "samples.h"
 #include "pattern.h"
+#include "song.h"
 
 #define SCR_W 640
 #define SCR_H 480
@@ -26,7 +27,12 @@
 #define PAT_LIST_Y 92
 #define PAT_LIST_W 592
 #define PAT_ACT_N  6
-#define MENU_N     8
+#define MENU_N     10
+
+/* song page geometry */
+#define SONG_ROWS   12
+#define SONG_ROW_H  30
+#define SONG_ACT_N  10
 
 /* grid geometry */
 #define GRID_X0  76
@@ -37,7 +43,8 @@
 #define ROW_PITCH (CELL_H + 6)          /* 36 */
 
 enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_KIT, MODE_RCH, MODE_SWING,
-            MODE_PATTERN, MODE_PAT_ACT, MODE_RENAME };
+            MODE_LENGTH, MODE_PATTERN, MODE_PAT_ACT, MODE_RENAME,
+            MODE_SONG, MODE_SONG_ACT, MODE_EXPORT };
 
 enum Action {
     ACT_NONE, ACT_UP, ACT_DOWN, ACT_LEFT, ACT_RIGHT,
@@ -60,9 +67,21 @@ typedef struct {
     char conf_override[1200];         /* that file, for tooling/tests */
     int pat_sel;                      /* pattern browser cursor (1-based slot) */
     int pat_act_sel;
+    int pat_pick_target;              /* song bar+1 while picking a pattern */
     int rename_slot;
     int rename_pos;
     char rename_buf[PAT_NAME_LEN + 1];
+    Song song;
+    SongSet *song_sets[2];            /* double-buffered immutable snapshot sets */
+    int song_set_active;              /* buffer index the engine last used */
+    int song_sel;                     /* song editor cursor (0-based bar) */
+    int song_act_sel;
+    int song_dirty;
+    Uint32 song_last_save;
+    char song_path[1200];
+    char song_wav_path[1200];
+    int export_progress;              /* 0..1000 */
+    char export_display[64];
     int sh_held[SH_COUNT];            /* shoulder buttons currently down */
     int sh_last;                      /* most recent shoulder (overlay owner) */
     int sh_suppress;                  /* shortcut used: hide hint until release */
@@ -105,6 +124,27 @@ static void set_msg(App *a, const char *fmt, ...)
 }
 
 /* ------------------------------------------------------------ persistence */
+
+static int pattern_len(const App *a)
+{
+    return engine_length_clamp(a->eng.length);
+}
+
+static void clamp_cursor(App *a)
+{
+    int len = pattern_len(a);
+    if (a->cur_step < 0) a->cur_step = 0;
+    if (a->cur_step >= len) a->cur_step = len - 1;
+}
+
+/* Move the step cursor within the pattern length (wraps at the last step). */
+static void move_step(App *a, int dir)
+{
+    int len = pattern_len(a);
+    if (a->cur_step < 0 || a->cur_step >= len)
+        a->cur_step = dir > 0 ? len - 1 : 0;
+    a->cur_step = (a->cur_step + dir + len) % len;
+}
 
 static void demo_pattern(App *a)
 {
@@ -174,6 +214,9 @@ static void resolve_conf(App *a, const char *base)
             }
         }
     }
+
+    snprintf(a->song_path, sizeof a->song_path, "%s/song.txt", a->lib.conf_dir);
+    snprintf(a->song_wav_path, sizeof a->song_wav_path, "%s/song.wav", a->lib.conf_dir);
 }
 
 static int save_current(App *a)
@@ -185,9 +228,13 @@ static int save_current(App *a)
 
 static int load_current(App *a)
 {
+    int rc;
     if (a->legacy_override)
-        return pattern_load_file(&a->eng, a->conf_override);
-    return pattern_load_slot(&a->lib, &a->eng, a->lib.active_slot);
+        rc = pattern_load_file(&a->eng, a->conf_override);
+    else
+        rc = pattern_load_slot(&a->lib, &a->eng, a->lib.active_slot);
+    if (rc == 0) clamp_cursor(a);
+    return rc;
 }
 
 static int load_slot_into_editor(App *a, int slot)
@@ -203,6 +250,7 @@ static int load_slot_into_editor(App *a, int slot)
     a->lib.active_slot = slot;
     pattern_set_active(&a->lib, slot);
     a->dirty = 0;
+    clamp_cursor(a);
     return 0;
 }
 
@@ -231,6 +279,7 @@ static const char *shortcut_label(int sh, int ad)
     case SH_L1:
         if (ad == ACT_LEFT) return "TEMPO";
         if (ad == ACT_RIGHT) return "SWING";
+        if (ad == ACT_UP) return "PATTERN LENGTH";
         break;
     case SH_L2:
         if (ad == ACT_LEFT) return "PATTERN LIBRARY";
@@ -259,6 +308,7 @@ static void draw_shortcut_overlay(App *a)
 {
     Uint32 now = SDL_GetTicks();
     if (!a->shortcut_until || (int)(now - a->shortcut_until) >= 0) return;
+    if (a->pat_pick_target > 0 || a->mode == MODE_EXPORT) return;
     int sh = a->sh_last;
     if (sh < 0 || sh >= SH_COUNT) return;
 
@@ -325,7 +375,13 @@ static void draw_pattern_list(App *a, int with_actions)
     int px = 16, py = 26, pw = 608, ph = 430;
     cv_rect(c, px, py, pw, ph, C_PANEL);
     cv_border(c, px, py, pw, ph, 2, C_TEXT);
-    cv_text(c, px + 12, py + 10, "PATTERN LIBRARY", 1, C_TEXT);
+    cv_text(c, px + 12, py + 10,
+            a->pat_pick_target > 0 ? "PICK PATTERN" : "PATTERN LIBRARY", 1, C_TEXT);
+    if (a->pat_pick_target > 0) {
+        char sbuf[40];
+        snprintf(sbuf, sizeof sbuf, "FOR SONG BAR %03d", a->pat_pick_target);
+        cv_text(c, px + 12, py + 26, sbuf, 1, C_TEXT_DIM);
+    }
 
     int page = (a->pat_sel - 1) / PAT_ROWS;
     int first = page * PAT_ROWS + 1;
@@ -404,6 +460,116 @@ static void draw_rename(App *a)
             "UD:CHAR  LR:MOVE  A:NEXT  X:DEL  SELECT:SAVE  B:CANCEL", 1, C_TEXT_DIM);
 }
 
+static const char *SONG_ACT[SONG_ACT_N] = {
+    "INSERT BAR", "DELETE BAR", "MOVE BAR UP", "MOVE BAR DOWN",
+    "PLAY FROM HERE", "TOGGLE LOOP", "EXPORT WAV", "SAVE SONG",
+    "CLEAR SONG", "CANCEL"
+};
+
+static void draw_song_list(App *a, int with_actions)
+{
+    Canvas *c = &a->cv;
+    int px = 16, py = 26, pw = 608, ph = 430;
+    cv_rect(c, px, py, pw, ph, C_PANEL);
+    cv_border(c, px, py, pw, ph, 2, C_TEXT);
+    cv_text(c, px + 12, py + 10, "SONG", 1, C_TEXT);
+
+    char buf[80];
+    int count = a->song.count;
+    int page = count > 0 ? a->song_sel / SONG_ROWS : 0;
+    int first = page * SONG_ROWS;
+    int last = first + SONG_ROWS - 1;
+    if (last >= count) last = count - 1;
+    if (count > 0)
+        snprintf(buf, sizeof buf, "%03d-%03d / %03d", first + 1, last + 1, count);
+    else
+        snprintf(buf, sizeof buf, "000-000 / 000");
+    cv_text(c, px + pw - cv_text_w(buf, 1) - 12, py + 10, buf, 1, C_TEXT_DIM);
+
+    if (count == 0) {
+        cv_text(c, px + 24, py + 60, "EMPTY SONG", 2, C_TEXT_DIM);
+        cv_text(c, px + 24, py + 90, "SELECT:ACTIONS -> INSERT BAR", 1, C_TEXT_DIM);
+    } else {
+        for (int i = 0; i < SONG_ROWS; i++) {
+            int bar = first + i;
+            if (bar >= count) break;
+            int ry = PAT_LIST_Y + i * SONG_ROW_H;
+            int sel = (bar == a->song_sel);
+            int playing = (a->eng.song_playing && bar == a->eng.song_bar);
+            int slot = a->song.slot[bar];
+            int has = (slot >= 1 && pattern_slot_exists(&a->lib, slot));
+            const char *nm = has ? pattern_name(&a->lib, slot) : "MISSING";
+
+            if (sel)
+                cv_rect(c, PAT_LIST_X - 8, ry - 4, PAT_LIST_W, 26, cv_dim(C_TEXT, 0.22f));
+            if (playing)
+                cv_rect(c, PAT_LIST_X - 8, ry - 4, 4, 26, C_LED);
+            snprintf(buf, sizeof buf, "BAR %03d", bar + 1);
+            cv_text(c, PAT_LIST_X, ry, buf, 1, C_TEXT);
+            snprintf(buf, sizeof buf, "P%03d", slot);
+            cv_text(c, PAT_LIST_X + 78, ry, buf, 1, has ? C_TEXT : C_TEXT_DIM);
+            cv_text(c, PAT_LIST_X + 126, ry, nm, 1,
+                    has ? (sel ? C_CURSOR : C_TEXT) : C_TEXT_DIM);
+            if (playing)
+                cv_text(c, PAT_LIST_X + PAT_LIST_W - 44, ry, "PLAY", 1, C_LED);
+            if (sel)
+                cv_border(c, PAT_LIST_X - 8, ry - 4, PAT_LIST_W, 26, 1, C_CURSOR);
+        }
+    }
+
+    if (count > 0) {
+        snprintf(buf, sizeof buf, "%d BARS   LOOP %s", count, a->song.loop ? "ON" : "OFF");
+        cv_text(c, px + 12, py + 28, buf, 1, C_TEXT_DIM);
+    }
+
+    if (with_actions) {
+        int mw = 300, mh = SONG_ACT_N * 18 + 30;
+        int mx = (SCR_W - mw) / 2, my = (SCR_H - mh) / 2;
+        cv_rect(c, mx, my, mw, mh, C_PANEL);
+        cv_border(c, mx, my, mw, mh, 2, C_TEXT);
+        if (count > 0)
+            snprintf(buf, sizeof buf, "BAR %03d  P%03d", a->song_sel + 1, a->song.slot[a->song_sel]);
+        else
+            snprintf(buf, sizeof buf, "EMPTY SONG");
+        cv_text(c, mx + 10, my + 8, buf, 1, C_TEXT);
+        for (int i = 0; i < SONG_ACT_N; i++) {
+            int iy = my + 26 + i * 18;
+            if (i == a->song_act_sel)
+                cv_rect(c, mx + 4, iy - 2, mw - 8, 15, cv_dim(C_TEXT, 0.30f));
+            const char *label = SONG_ACT[i];
+            char lbuf[32];
+            if (i == 5) {
+                snprintf(lbuf, sizeof lbuf, "LOOP: %s", a->song.loop ? "ON" : "OFF");
+                label = lbuf;
+            }
+            cv_text(c, mx + 14, iy, label, 1,
+                    i == a->song_act_sel ? C_CURSOR : C_TEXT_DIM);
+        }
+    }
+}
+
+static void draw_export_progress(App *a)
+{
+    Canvas *c = &a->cv;
+    int mw = 460, mh = 140;
+    int mx = (SCR_W - mw) / 2, my = (SCR_H - mh) / 2;
+    cv_rect(c, mx, my, mw, mh, C_PANEL);
+    cv_border(c, mx, my, mw, mh, 2, C_TEXT);
+    cv_text(c, mx + 16, my + 12, "EXPORTING SONG", 1, C_TEXT);
+    cv_text(c, mx + 16, my + 32, a->export_display, 1, C_TEXT_DIM);
+
+    int bx = mx + 20, by = my + 64, bw = mw - 40, bh = 20;
+    cv_rect(c, bx, by, bw, bh, 0x1c1c24);
+    int fill = bw * a->export_progress / 1000;
+    if (fill > 0) cv_rect(c, bx, by, fill, bh, C_LED);
+    cv_border(c, bx, by, bw, bh, 2, C_TEXT_DIM);
+
+    char buf[32];
+    snprintf(buf, sizeof buf, "%d%%", a->export_progress / 10);
+    cv_text(c, mx + (mw - cv_text_w(buf, 1)) / 2, my + 92, buf, 1, C_TEXT);
+    cv_text(c, mx + 16, my + 116, "PLEASE WAIT", 1, C_TEXT_DIM);
+}
+
 static void draw_ui(App *a)
 {
     Canvas *c = &a->cv;
@@ -415,27 +581,59 @@ static void draw_ui(App *a)
     char tbuf[40];
     const char *st = e->playing ? "PLAYING" : "STOPPED";
     cv_text(c, SCR_W - cv_text_w(st, 1) - 10, 10, st, 1, e->playing ? C_LED : C_TEXT_DIM);
-    cv_text(c, SCR_W - 230, 10, "TEMPO", 1, C_TEXT_DIM);
-    snprintf(tbuf, sizeof tbuf, "%6.2f", e->bpm_x100 / 100.0);
-    cv_text(c, SCR_W - 170, 10, tbuf, 1, C_TEXT);
-    if (e->swing_pct > 0) {
-        snprintf(tbuf, sizeof tbuf, "%d%% SWING", e->swing_pct);
-        cv_text(c, SCR_W - 360, 10, tbuf, 1, C_TEXT_DIM);
+
+    int header_bpm = e->bpm_x100;
+    int header_swing = e->swing_pct;
+    int header_len = engine_length_clamp(e->length);
+    const PatternSnapshot *hsp = NULL;
+    const SongSet *hset = (const SongSet *)e->song_set;
+    if (e->song_playing && hset &&
+        e->song_bar >= 0 && e->song_bar < hset->count)
+        hsp = &hset->pat[e->song_bar];
+    if (hsp) {
+        header_bpm = hsp->bpm_x100;
+        header_swing = hsp->swing_pct;
+        header_len = engine_length_clamp(hsp->length);
     }
-    /* active pattern slot + name (M7) */
-    snprintf(tbuf, sizeof tbuf, "P%03d", a->lib.active_slot);
-    cv_text(c, 112, 10, tbuf, 1, C_TEXT);
-    cv_text(c, 148, 10, pattern_name(&a->lib, a->lib.active_slot), 1, C_TEXT_DIM);
+
+    cv_text(c, SCR_W - 230, 10, "TEMPO", 1, C_TEXT_DIM);
+    snprintf(tbuf, sizeof tbuf, "%6.2f", header_bpm / 100.0);
+    cv_text(c, SCR_W - 170, 10, tbuf, 1, C_TEXT);
+    if (header_swing > 0)
+        snprintf(tbuf, sizeof tbuf, "LEN %02d  SW %d%%", header_len, header_swing);
+    else
+        snprintf(tbuf, sizeof tbuf, "LEN %02d", header_len);
+    cv_text(c, 288, 10, tbuf, 1, C_TEXT_DIM);
+
+    /* active pattern slot + name, or the song bar in song mode */
+    if (a->mode == MODE_SONG || a->mode == MODE_SONG_ACT || a->mode == MODE_EXPORT) {
+        if (a->song.count > 0) {
+            int bar = (e->song_playing && e->song_bar >= 0 && e->song_bar < a->song.count)
+                      ? e->song_bar : a->song_sel;
+            snprintf(tbuf, sizeof tbuf, "SONG %03d/%03d", bar + 1, a->song.count);
+        } else {
+            snprintf(tbuf, sizeof tbuf, "SONG 000/000");
+        }
+        cv_text(c, 112, 10, tbuf, 1, e->song_playing ? C_LED : C_TEXT);
+    } else {
+        snprintf(tbuf, sizeof tbuf, "P%03d", a->lib.active_slot);
+        cv_text(c, 112, 10, tbuf, 1, C_TEXT);
+        cv_text(c, 148, 10, pattern_name(&a->lib, a->lib.active_slot), 1, C_TEXT_DIM);
+    }
 
     /* step LED + beat numbers */
     int led = e->cur_step;
+    int pat_len = engine_length_clamp(e->length);
     for (int s = 0; s < N_STEPS; s++) {
         int x = GRID_X0 + s * COL_PITCH;
-        if (s % 4 == 0) {
+        int in = (s < pat_len);
+        if (in && s % 4 == 0) {
             char d[2] = { (char)('1' + s / 4), 0 };
             cv_text(c, x + CELL_W - 8, 40, d, 1, C_TEXT_DIM);
         }
-        Uint32 col = (s == led) ? C_LED : ((s % 4 == 0) ? cv_dim(C_LED, 0.35f) : 0x33333b);
+        Uint32 col = !in ? 0x222228
+                    : (s == led) ? C_LED
+                    : ((s % 4 == 0) ? cv_dim(C_LED, 0.35f) : 0x33333b);
         cv_rect(c, x, 50, CELL_W, 4, col);
     }
 
@@ -483,17 +681,19 @@ static void draw_ui(App *a)
             for (int s = 0; s < N_STEPS; s++) {
                 int x = GRID_X0 + s * COL_PITCH;
                 int y = GRID_Y0 + t * ROW_PITCH;
+                int in = (s < pat_len);
                 unsigned char lv = e->lvl[t][s];
                 unsigned char r = e->rch[t][s];
-                Uint32 fill = lv ? (r ? cv_dim(col, 0.55f) : cv_dim(col, 0.25f))
+                Uint32 fill = !in ? cv_dim(col, 0.06f)
+                            : lv ? (r ? cv_dim(col, 0.55f) : cv_dim(col, 0.25f))
                                  : cv_dim(col, 0.10f);
                 cv_rect(c, x, y, CELL_W, CELL_H, fill);
                 if (r) {
                     char dch[2] = { RCH_CH[r], 0 };
                     cv_text(c, x + (CELL_W - 8) / 2, y + (CELL_H - 8) / 2, dch, 1,
-                            lv ? col : C_TEXT_DIM);
+                            !in ? cv_dim(C_TEXT_DIM, 0.55f) : (lv ? col : C_TEXT_DIM));
                 }
-                if (s == led && e->playing)
+                if (in && s == led && e->playing)
                     cv_border(c, x, y, CELL_W, CELL_H, 2, C_LED);
             }
         }
@@ -503,28 +703,39 @@ static void draw_ui(App *a)
         for (int s = 0; s < N_STEPS; s++) {
             int x = GRID_X0 + s * COL_PITCH;
             int y = GRID_Y0 + t * ROW_PITCH;
+            int in = (s < pat_len);
             unsigned char lv = e->lvl[t][s];
             unsigned char r = e->rch[t][s];
-            Uint32 fill = lv == LVL_OFF ? cv_dim(col, 0.20f)
+            Uint32 fill = !in ? cv_dim(col, 0.06f)
+                        : lv == LVL_OFF ? cv_dim(col, 0.20f)
                         : lv == LVL_ON  ? cv_dim(col, 0.65f)
                                         : col;
             cv_rect(c, x, y, CELL_W, CELL_H, fill);
-            if (lv == LVL_ACC)
+            if (in && lv == LVL_ACC)
                 cv_border(c, x + 5, y + 5, CELL_W - 10, CELL_H - 10, 2, C_ACCENT);
-            if (lv > LVL_OFF && r > RCH_OFF) {
+            if (in && lv > LVL_OFF && r > RCH_OFF) {
                 char dch[2] = { RCH_CH[r], 0 };
                 cv_text(c, x + (CELL_W - 8) / 2, y + CELL_H - 10, dch, 1,
                         lv == LVL_ACC ? 0x000000u : C_TEXT);
             }
             /* playing column highlight */
-            if (s == led && e->playing)
+            if (in && s == led && e->playing)
                 cv_border(c, x, y, CELL_W, CELL_H, 2, C_LED);
         }
     }
     }
 
+    /* end-of-pattern marker: steps past the pattern length stay visible but
+     * dimmed, so shortening a pattern never destroys hidden notes */
+    if (a->mode != MODE_KIT && pat_len < N_STEPS) {
+        int gx = GRID_X0 + pat_len * COL_PITCH - 3;
+        int gy = GRID_Y0 + (N_TRACKS - 1) * ROW_PITCH + CELL_H;
+        cv_rect(c, gx, 50, 2, gy - 50, C_TEXT_DIM);
+    }
+
     /* cursor */
-    if (a->mode == MODE_EDIT || a->mode == MODE_KIT || a->mode == MODE_RCH) {
+    if (a->mode == MODE_KIT ||
+        ((a->mode == MODE_EDIT || a->mode == MODE_RCH) && a->cur_step < pat_len)) {
         int x = GRID_X0 + a->cur_step * COL_PITCH;
         int y = GRID_Y0 + a->cur_track * ROW_PITCH;
         cv_border(c, x - 2, y - 2, CELL_W + 4, CELL_H + 4, 2, C_CURSOR);
@@ -538,6 +749,12 @@ static void draw_ui(App *a)
     } else if (a->mode == MODE_RENAME) {
         draw_pattern_list(a, 0);
         draw_rename(a);
+    } else if (a->mode == MODE_SONG) {
+        draw_song_list(a, 0);
+    } else if (a->mode == MODE_SONG_ACT) {
+        draw_song_list(a, 1);
+    } else if (a->mode == MODE_EXPORT) {
+        draw_export_progress(a);
     }
 
     /* status / menu / hints */
@@ -553,19 +770,34 @@ static void draw_ui(App *a)
         cv_text(c, 10, SCR_H - 14, "A:SELECT+HEAR  X:HEAR  B:BACK  START:PLAY", 1, C_TEXT_DIM);
     else if (a->mode == MODE_RCH)
         cv_text(c, 10, SCR_H - 14, "A:ROLL 2/3/4/F  X:HEAR  B:CLEAR ROLL  SELECT:BACK", 1, C_TEXT_DIM);
-    else if (a->mode == MODE_PATTERN)
-        cv_text(c, 10, SCR_H - 14, "A:LOAD  SELECT:ACTIONS  DPAD-LR:PAGE  B:BACK  START:PLAY", 1, C_TEXT_DIM);
+    else if (a->mode == MODE_PATTERN) {
+        if (a->pat_pick_target > 0)
+            cv_text(c, 10, SCR_H - 14, "A:PICK  B:CANCEL  DPAD-LR:PAGE", 1, C_TEXT_DIM);
+        else
+            cv_text(c, 10, SCR_H - 14, "A:LOAD  SELECT:ACTIONS  DPAD-LR:PAGE  B:BACK  START:PLAY", 1, C_TEXT_DIM);
+    }
     else if (a->mode == MODE_PAT_ACT)
         cv_text(c, 10, SCR_H - 14, "UD:ACTION  LR:SLOT  A:SELECT  B:CANCEL", 1, C_TEXT_DIM);
     else if (a->mode == MODE_RENAME)
         cv_text(c, 10, SCR_H - 14, "UD:CHAR  LR:MOVE  A:NEXT  X:DEL  SELECT:SAVE  B:CANCEL", 1, C_TEXT_DIM);
+    else if (a->mode == MODE_SONG) {
+        if (a->song.count == 0)
+            cv_text(c, 10, SCR_H - 14, "A:ADD BAR  SELECT:ACTIONS  B:BACK  START:PLAY", 1, C_TEXT_DIM);
+        else
+            cv_text(c, 10, SCR_H - 14, "A:PICK  SELECT:ACTIONS  DPAD-LR:PAGE  X:JUMP  B:BACK  START:PLAY", 1, C_TEXT_DIM);
+    }
+    else if (a->mode == MODE_SONG_ACT)
+        cv_text(c, 10, SCR_H - 14, "UD:ACTION  LR:BAR  A:SELECT  B:CANCEL", 1, C_TEXT_DIM);
+    else if (a->mode == MODE_EXPORT)
+        cv_text(c, 10, SCR_H - 14, "EXPORTING WAV - PLEASE WAIT", 1, C_TEXT_DIM);
     else
         cv_text(c, 10, SCR_H - 14, "A:STEP  B:CLEAR  X:HEAR  START:PLAY  SELECT:MENU  HOLD A SHOULDER", 1, C_TEXT_DIM);
 
     if (a->mode == MODE_MENU) {
         static const char *items[MENU_N] = {
-            "EDIT TEMPO", "EDIT SWING", "RATCHET NOTES", "SELECT KITS",
-            "SAVE PATTERN", "PATTERN LIBRARY", "CLEAR ALL", "QUIT"
+            "EDIT TEMPO", "EDIT SWING", "PATTERN LENGTH", "RATCHET NOTES",
+            "SELECT KITS", "SAVE PATTERN", "PATTERN LIBRARY", "SONG MODE",
+            "CLEAR ALL", "QUIT"
         };
         int n = MENU_N;
         int mw = 240, mh = 16 * n + 34;
@@ -597,6 +829,15 @@ static void draw_ui(App *a)
         snprintf(tbuf, sizeof tbuf, "%d%%", e->swing_pct);
         cv_text(c, mx + 12, my + 34, tbuf, 2, C_TEXT);
         cv_text(c, mx + 12, my + 62, "UD:+-1  LR:+-5  A/B:OK", 1, C_TEXT_DIM);
+    } else if (a->mode == MODE_LENGTH) {
+        int mw = 300, mh = 80;
+        int mx = (SCR_W - mw) / 2, my = (SCR_H - mh) / 2;
+        cv_rect(c, mx, my, mw, mh, C_PANEL);
+        cv_border(c, mx, my, mw, mh, 2, C_TEXT);
+        cv_text(c, mx + 12, my + 10, "PATTERN LENGTH", 1, C_TEXT);
+        snprintf(tbuf, sizeof tbuf, "%d STEPS", engine_length_clamp(e->length));
+        cv_text(c, mx + 12, my + 34, tbuf, 2, C_TEXT);
+        cv_text(c, mx + 12, my + 62, "UD:+-1  LR:+-4  A/B:OK", 1, C_TEXT_DIM);
     }
 
     draw_shortcut_overlay(a);
@@ -628,6 +869,459 @@ static void present(App *a)
     SDL_RenderPresent(a->ren);
 }
 
+/* -------------------------------------------------------------- song mode */
+
+static void stop_playback(App *a)
+{
+    if (a->eng.song_playing) engine_song_stop(&a->eng);
+    a->eng.playing = 0;
+}
+
+static void toggle_edit_play(App *a)
+{
+    if (a->eng.song_playing) stop_playback(a);
+    a->eng.playing ^= 1;
+    if (a->eng.playing) a->eng.restart = 1;
+}
+
+/* Build a fresh immutable snapshot set in the inactive buffer. Stops playback
+ * first; the old set stays valid for any callback still using it. */
+static SongSet *song_prepare(App *a, int *missing_out)
+{
+    if (missing_out) *missing_out = 0;
+    if (!a->song_sets[0] || !a->song_sets[1]) return NULL;
+    stop_playback(a);
+
+    /* Wait for one audio callback to finish after stopping, so the buffer we
+     * are about to overwrite is no longer being read by the audio thread. */
+    if (a->dev) {
+        unsigned int before = a->eng.mix_count;
+        Uint32 deadline = SDL_GetTicks() + 100;
+        while (a->eng.mix_count == before && (int)(SDL_GetTicks() - deadline) < 0)
+            SDL_Delay(1);
+    }
+
+    int idx = 1 - a->song_set_active;
+    SongSet *set = a->song_sets[idx];
+    int missing = song_build_set(&a->song, &a->lib, set);
+    if (missing < 0) return NULL;
+    a->song_set_active = idx;
+    a->eng.song_set = set;
+    if (missing_out) *missing_out = missing;
+    return set;
+}
+
+static void song_play(App *a, int from_bar)
+{
+    if (a->song.count <= 0) { set_msg(a, "SONG EMPTY"); return; }
+    int missing = 0;
+    SongSet *set = song_prepare(a, &missing);
+    if (!set || set->count <= 0) { set_msg(a, "SONG BUILD FAILED"); return; }
+    if (from_bar < 0) from_bar = 0;
+    if (from_bar >= set->count) from_bar = set->count - 1;
+    a->song_sel = from_bar;
+    engine_song_start(&a->eng, set, a->song.loop, from_bar);
+    if (missing > 0) set_msg(a, "PLAYING (%d EMPTY BARS)", missing);
+    else set_msg(a, "PLAYING SONG");
+}
+
+static void song_toggle_play(App *a)
+{
+    if (a->eng.song_playing) {
+        stop_playback(a);
+        set_msg(a, "SONG STOPPED");
+    } else {
+        song_play(a, 0);
+    }
+}
+
+static void song_insert(App *a)
+{
+    if (a->song.count >= SONG_MAX_BARS) { set_msg(a, "SONG FULL"); return; }
+    int at, slot;
+    if (a->song.count == 0) {
+        at = 0;
+        slot = a->lib.active_slot;
+        if (slot < 1 || !pattern_slot_exists(&a->lib, slot)) {
+            set_msg(a, "SAVE A PATTERN FIRST");
+            return;
+        }
+    } else {
+        at = a->song_sel + 1;
+        slot = a->song.slot[a->song_sel];
+    }
+    memmove(&a->song.slot[at + 1], &a->song.slot[at],
+            (size_t)(a->song.count - at) * sizeof(int));
+    a->song.slot[at] = slot;
+    a->song.count++;
+    a->song_sel = at;
+    a->song_dirty = 1;
+    set_msg(a, "BAR %03d ADDED", at + 1);
+}
+
+static void song_delete(App *a)
+{
+    if (a->song.count <= 0) { set_msg(a, "SONG EMPTY"); return; }
+    int at = a->song_sel;
+    memmove(&a->song.slot[at], &a->song.slot[at + 1],
+            (size_t)(a->song.count - at - 1) * sizeof(int));
+    a->song.count--;
+    if (a->song.count == 0) a->song_sel = 0;
+    else if (a->song_sel >= a->song.count) a->song_sel = a->song.count - 1;
+    a->song_dirty = 1;
+    set_msg(a, "BAR %03d DELETED", at + 1);
+}
+
+static void song_move(App *a, int dir)
+{
+    if (a->song.count < 2) return;
+    int at = a->song_sel;
+    int to = at + dir;
+    if (to < 0 || to >= a->song.count) return;
+    int tmp = a->song.slot[at];
+    a->song.slot[at] = a->song.slot[to];
+    a->song.slot[to] = tmp;
+    a->song_sel = to;
+    a->song_dirty = 1;
+}
+
+static void song_begin_pick(App *a)
+{
+    if (a->song.count == 0) {
+        song_insert(a);
+        return;
+    }
+    stop_playback(a);
+    a->pat_pick_target = a->song_sel + 1;
+    a->pat_sel = a->song.slot[a->song_sel];
+    if (a->pat_sel < 1 || a->pat_sel > PAT_MAX_SLOTS)
+        a->pat_sel = a->lib.active_slot;
+    if (a->pat_sel < 1 || a->pat_sel > PAT_MAX_SLOTS)
+        a->pat_sel = 1;
+    a->mode = MODE_PATTERN;
+}
+
+static void song_assign_pick(App *a)
+{
+    int bar = a->pat_pick_target - 1;
+    if (bar < 0 || bar >= a->song.count) {
+        a->pat_pick_target = 0;
+        a->mode = MODE_SONG;
+        return;
+    }
+    if (!pattern_slot_exists(&a->lib, a->pat_sel)) {
+        set_msg(a, "P%03d EMPTY", a->pat_sel);
+        return;
+    }
+    a->song.slot[bar] = a->pat_sel;
+    a->song_sel = bar;
+    a->pat_pick_target = 0;
+    a->mode = MODE_SONG;
+    a->song_dirty = 1;
+    if (song_save(&a->song, a->song_path) == 0) {
+        a->song_dirty = 0;
+        a->song_last_save = SDL_GetTicks();
+    }
+    set_msg(a, "BAR %03d = P%03d", bar + 1, a->pat_sel);
+}
+
+static int song_save_now(App *a)
+{
+    int rc = song_save(&a->song, a->song_path);
+    if (rc == 0) {
+        a->song_dirty = 0;
+        a->song_last_save = SDL_GetTicks();
+    }
+    return rc;
+}
+
+/* Stream the song to a PCM16 WAV, writing chunks straight to disk. */
+static int render_song_wav(App *a, SongSet *set, const char *path, int show_progress)
+{
+    const int rate = 44100;
+    const int tail = rate * 2;                 /* let the last hits ring */
+    long long total = song_total_frames(set, rate, tail);
+    if (total <= 0) return -1;
+    if (total > (long long)(0xFFFFFFFFu / 4u)) return -1;
+
+    WavWriter w;
+    if (wav_writer_open(&w, path, rate) != 0) return -1;
+
+    Engine ex;
+    engine_init(&ex, rate);
+    ex.song_set = set;
+    ex.song_loop = 0;
+    ex.song_start_bar = 0;
+    ex.song_playing = 1;
+    ex.playing = 1;
+    engine_restart(&ex);
+
+    float buf[1024 * 2];
+    long long done = 0;
+    Uint32 last = 0;
+    if (show_progress) {
+        a->export_progress = 0;
+        draw_ui(a);
+        present(a);
+        last = SDL_GetTicks();
+    }
+
+    while (done < total) {
+        int n = (int)((total - done) > 1024 ? 1024 : (total - done));
+        engine_mix(&ex, buf, n);
+        if (wav_writer_write(&w, buf, n) != 0) {
+            wav_writer_close(&w);
+            return -1;
+        }
+        done += n;
+        if (show_progress) {
+            Uint32 now = SDL_GetTicks();
+            if (now - last > 100 || done >= total) {
+                a->export_progress = (int)(done * 1000 / total);
+                draw_ui(a);
+                present(a);
+                last = now;
+            }
+        }
+    }
+
+    if (show_progress) {
+        a->export_progress = 1000;
+        draw_ui(a);
+        present(a);
+    }
+    return wav_writer_close(&w);
+}
+
+static void song_export_ui(App *a)
+{
+    if (a->song.count <= 0) { set_msg(a, "SONG EMPTY"); a->mode = MODE_SONG; return; }
+    int missing = 0;
+    SongSet *set = song_prepare(a, &missing);
+    if (!set) { set_msg(a, "EXPORT FAILED"); a->mode = MODE_SONG; return; }
+
+    a->mode = MODE_EXPORT;
+    a->export_progress = 0;
+    snprintf(a->export_display, sizeof a->export_display, "conf/song.wav");
+    int rc = render_song_wav(a, set, a->song_wav_path, 1);
+    a->mode = MODE_SONG;
+    if (rc != 0) set_msg(a, "EXPORT FAILED");
+    else if (missing > 0) set_msg(a, "EXPORTED (%d EMPTY BARS)", missing);
+    else set_msg(a, "EXPORTED conf/song.wav");
+}
+
+static void song_do_action(App *a, int item)
+{
+    switch (item) {
+    case 0: song_insert(a); a->mode = MODE_SONG; break;
+    case 1: song_delete(a); a->mode = MODE_SONG; break;
+    case 2: song_move(a, -1); a->mode = MODE_SONG; break;
+    case 3: song_move(a, 1); a->mode = MODE_SONG; break;
+    case 4:
+        a->mode = MODE_SONG;
+        song_play(a, a->song_sel);
+        break;
+    case 5:
+        a->song.loop ^= 1;
+        a->song_dirty = 1;
+        engine_song_set_loop(&a->eng, a->song.loop);
+        set_msg(a, "LOOP %s", a->song.loop ? "ON" : "OFF");
+        break;
+    case 6:
+        song_export_ui(a);
+        break;
+    case 7:
+        if (song_save_now(a) == 0) set_msg(a, "SONG SAVED");
+        else set_msg(a, "SONG SAVE FAILED");
+        a->mode = MODE_SONG;
+        break;
+    case 8:
+        a->song.count = 0;
+        a->song_sel = 0;
+        a->song_dirty = 1;
+        set_msg(a, "SONG CLEARED");
+        a->mode = MODE_SONG;
+        break;
+    default:
+        a->mode = MODE_SONG;
+        break;
+    }
+}
+
+/* Headless song persistence/snapshot checks (`--test-song`). */
+static void act(App *a, int act);
+
+static int test_song_run(App *a)
+{
+    int fails = 0;
+    SDL_Init(SDL_INIT_TIMER);
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    Song s;
+    song_init(&s);
+    int rc = song_load(&s, a->song_path);
+    CHECK(rc == 0, "song file loads");
+    CHECK(s.count == 4, "song has 4 bars");
+    CHECK(s.loop == 0, "loop flag loaded");
+    CHECK(s.slot[0] == 1 && s.slot[1] == 2 && s.slot[2] == 3 && s.slot[3] == 1,
+          "bar slots loaded");
+
+    SongSet *set = calloc(1, sizeof(SongSet));
+    if (!set) return 1;
+    int missing = song_build_set(&s, &a->lib, set);
+    CHECK(missing == 0, "all song bars load");
+    CHECK(set->count == 4, "snapshot set has 4 bars");
+    CHECK(set->pat[0].bpm_x100 == 12000, "bar 1 uses 120 BPM");
+    CHECK(set->pat[1].bpm_x100 == 25000, "bar 2 uses 250 BPM");
+    CHECK(set->pat[2].bpm_x100 == 9050, "bar 3 uses 90.5 BPM");
+    long long frames = song_total_frames(set, 44100, 44100 * 2);
+    CHECK(frames == 423886, "song length math");
+
+    /* Engine clock: bar advance, non-loop end, loop wrap. */
+    long long song_frames = song_total_frames(set, 44100, 0);
+    int bar1_steps = engine_length_clamp(set->pat[0].length);
+    long long one_bar = (long long)(44100.0 * 60.0 / (120.0 * 4.0) * bar1_steps);
+    float buf[2048];
+    Engine ex;
+    engine_init(&ex, 44100);
+    engine_song_start(&ex, set, 0, 0);
+    engine_restart(&ex);
+    long long done = 0;
+    while (done < one_bar + 1024) {
+        int n = (int)((one_bar + 1024 - done) > 1024 ? 1024 : (one_bar + 1024 - done));
+        engine_mix(&ex, buf, n);
+        done += n;
+    }
+    CHECK(ex.song_bar == 1, "song advances to the next bar");
+    CHECK(ex.song_playing == 1, "song keeps playing after a bar");
+
+    while (done < song_frames + 2048) {
+        int n = (int)((song_frames + 2048 - done) > 1024 ? 1024 : (song_frames + 2048 - done));
+        engine_mix(&ex, buf, n);
+        done += n;
+    }
+    CHECK(ex.song_playing == 0 && ex.song_done == 1, "non-loop song ends");
+    CHECK(ex.song_bar == 3, "song ends on the last bar");
+
+    engine_init(&ex, 44100);
+    engine_song_start(&ex, set, 1, 0);
+    engine_restart(&ex);
+    done = 0;
+    while (done < song_frames + 1024) {
+        int n = (int)((song_frames + 1024 - done) > 1024 ? 1024 : (song_frames + 1024 - done));
+        engine_mix(&ex, buf, n);
+        done += n;
+    }
+    CHECK(ex.song_playing == 1 && ex.song_done == 0, "looping song wraps");
+    CHECK(ex.song_bar == 0, "looping song returns to bar 1");
+
+    /* Live callback chunking (512) vs export chunking (1024) must be identical. */
+    long long nframes = song_frames;
+    float *la = malloc(sizeof(float) * 2 * (size_t)nframes);
+    float *lb = malloc(sizeof(float) * 2 * (size_t)nframes);
+    if (la && lb) {
+        Engine ea, eb;
+        engine_init(&ea, 44100);
+        engine_song_start(&ea, set, 0, 0);
+        engine_restart(&ea);
+        done = 0;
+        while (done < nframes) {
+            int n = (int)((nframes - done) > 512 ? 512 : (nframes - done));
+            engine_mix(&ea, la + done * 2, n);
+            done += n;
+        }
+        engine_init(&eb, 44100);
+        engine_song_start(&eb, set, 0, 0);
+        engine_restart(&eb);
+        done = 0;
+        while (done < nframes) {
+            int n = (int)((nframes - done) > 1024 ? 1024 : (nframes - done));
+            engine_mix(&eb, lb + done * 2, n);
+            done += n;
+        }
+        CHECK(memcmp(la, lb, sizeof(float) * 2 * (size_t)nframes) == 0,
+              "live/export chunk sizes render identically");
+    } else {
+        CHECK(0, "chunk-test buffers");
+    }
+    free(la);
+    free(lb);
+
+    free(set);
+
+    Song t = s;
+    t.loop = 1;
+    t.slot[1] = 3;
+    char tmp[1210];
+    snprintf(tmp, sizeof tmp, "%s.test", a->song_path);
+    CHECK(song_save(&t, tmp) == 0, "song saves");
+    Song r;
+    song_init(&r);
+    CHECK(song_load(&r, tmp) == 0, "song reloads");
+    CHECK(r.count == 4 && r.loop == 1 && r.slot[1] == 3,
+          "song save/load round-trip");
+    remove(tmp);
+
+    /* UI/action logic. */
+    a->song = s;
+    a->mode = MODE_SONG;
+    a->song_sel = 0;
+    act(a, ACT_DOWN);
+    CHECK(a->song_sel == 1, "song cursor moves");
+
+    a->mode = MODE_SONG_ACT;
+    a->song_sel = 0;
+    a->song_act_sel = 0;
+    act(a, ACT_DOWN);
+    CHECK(a->song_act_sel == 1, "song action cursor moves");
+    act(a, ACT_RIGHT);
+    CHECK(a->song_sel == 1, "song action menu moves the target bar");
+
+    a->song = s;
+    a->song_sel = 0;
+    a->song_dirty = 0;
+    song_do_action(a, 0);
+    CHECK(a->song.count == 5 && a->song.slot[1] == 1,
+          "insert bar duplicates the selection");
+    song_do_action(a, 1);
+    CHECK(a->song.count == 4, "delete bar");
+    a->song_sel = 1;
+    song_do_action(a, 2);
+    CHECK(a->song.slot[0] == 2 && a->song_sel == 0, "move bar up");
+    song_do_action(a, 3);
+    CHECK(a->song.slot[0] == 1 && a->song_sel == 1, "move bar down");
+    song_do_action(a, 5);
+    CHECK(a->song.loop == 1, "loop toggle");
+    song_do_action(a, 8);
+    CHECK(a->song.count == 0, "clear song");
+
+    a->song = s;
+    a->song_sets[0] = calloc(1, sizeof(SongSet));
+    a->song_sets[1] = calloc(1, sizeof(SongSet));
+    if (a->song_sets[0] && a->song_sets[1]) {
+        a->mode = MODE_SONG;
+        a->song_sel = 0;
+        a->eng.playing = 0;
+        a->eng.song_playing = 0;
+        act(a, ACT_PLAY);
+        CHECK(a->eng.song_playing == 1, "song START begins playback");
+        act(a, ACT_PLAY);
+        CHECK(a->eng.song_playing == 0, "song START stops playback");
+    } else {
+        CHECK(0, "song test buffers");
+    }
+    free(a->song_sets[0]);
+    free(a->song_sets[1]);
+    a->song_sets[0] = a->song_sets[1] = NULL;
+
+    SDL_Quit();
+    return fails ? 1 : 0;
+#undef CHECK
+}
+
 /* ----------------------------------------------------------------- audio */
 
 static void SDLCALL audio_cb(void *ud, Uint8 *stream, int len)
@@ -655,21 +1349,28 @@ static void do_menu(App *a, int item)
     switch (item) {
     case 0: a->mode = MODE_TEMPO; break;
     case 1: a->mode = MODE_SWING; break;
-    case 2: a->mode = MODE_RCH; break;
-    case 3:
+    case 2: a->mode = MODE_LENGTH; clamp_cursor(a); break;
+    case 3: a->mode = MODE_RCH; break;
+    case 4:
         a->mode = MODE_KIT;
         a->cur_step = a->eng.kit[a->cur_track];   /* land cursor on current pick */
         break;
-    case 4:
+    case 5:
         if (save_current(a) == 0) set_msg(a, "SAVED P%03d", a->lib.active_slot);
         else set_msg(a, "SAVE FAILED");
         a->mode = MODE_EDIT;
         break;
-    case 5:
+    case 6:
         a->mode = MODE_PATTERN;
         a->pat_sel = a->lib.active_slot;
         break;
-    case 6:
+    case 7:
+        stop_playback(a);
+        a->mode = MODE_SONG;
+        a->song_sel = 0;
+        if (a->song.count == 0) set_msg(a, "SONG EMPTY - SELECT:ACTIONS");
+        break;
+    case 8:
         for (int t = 0; t < N_TRACKS; t++)
             for (int s = 0; s < N_STEPS; s++) {
                 a->eng.lvl[t][s] = 0;
@@ -679,7 +1380,7 @@ static void do_menu(App *a, int item)
         set_msg(a, "PATTERN CLEARED");
         a->mode = MODE_EDIT;
         break;
-    case 7: a->quit = 1; break;
+    case 9: a->quit = 1; break;
     }
 }
 
@@ -777,8 +1478,8 @@ static void act(App *a, int act)
         switch (act) {
         case ACT_UP:    a->cur_track = (a->cur_track + N_TRACKS - 1) % N_TRACKS; break;
         case ACT_DOWN:  a->cur_track = (a->cur_track + 1) % N_TRACKS; break;
-        case ACT_LEFT:  a->cur_step = (a->cur_step + N_STEPS - 1) % N_STEPS; break;
-        case ACT_RIGHT: a->cur_step = (a->cur_step + 1) % N_STEPS; break;
+        case ACT_LEFT:  move_step(a, -1); break;
+        case ACT_RIGHT: move_step(a, 1); break;
         case ACT_CONFIRM: {
             unsigned char lv = (unsigned char)((e->lvl[a->cur_track][a->cur_step] + 1) % 3);
             e->lvl[a->cur_track][a->cur_step] = lv;
@@ -794,8 +1495,7 @@ static void act(App *a, int act)
                            e->rch[a->cur_track][a->cur_step], LVL_ON);
             break;
         case ACT_PLAY:
-            e->playing ^= 1;
-            if (e->playing) e->restart = 1;   /* consumed in audio cb */
+            toggle_edit_play(a);   /* consumed in audio cb */
             break;
         case ACT_MENU: a->mode = MODE_MENU; a->menu_sel = 0; break;
         case ACT_TEMPO_UP:   e->bpm_x100 += 500; if (e->bpm_x100 > 25000) e->bpm_x100 = 25000; a->dirty = 1; break;
@@ -840,11 +1540,13 @@ static void act(App *a, int act)
             engine_preview(e, t, a->cur_step, RCH_OFF, LVL_ACC);
             break;
         case ACT_PLAY:
-            e->playing ^= 1;
-            if (e->playing) e->restart = 1;
+            toggle_edit_play(a);
             break;
         case ACT_BACK:
-        case ACT_MENU: a->mode = MODE_EDIT; break;
+        case ACT_MENU:
+            a->mode = MODE_EDIT;
+            clamp_cursor(a);          /* variant index may exceed the new length */
+            break;
         default: break;
         }
         break;
@@ -885,13 +1587,35 @@ static void act(App *a, int act)
         if (act == ACT_CONFIRM || act == ACT_BACK || act == ACT_MENU) a->mode = MODE_EDIT;
         break;
     }
+    case MODE_LENGTH: {
+        Engine *en = &a->eng;
+        switch (act) {
+        case ACT_TEMPO_UP:   en->length += 4; break;
+        case ACT_TEMPO_DOWN: en->length -= 4; break;
+        case ACT_RIGHT:      en->length += 4; break;
+        case ACT_LEFT:       en->length -= 4; break;
+        case ACT_UP:         en->length += 1; break;
+        case ACT_DOWN:       en->length -= 1; break;
+        default: break;
+        }
+        if (act != ACT_CONFIRM && act != ACT_BACK && act != ACT_MENU && act != ACT_HEAR) {
+            en->length = engine_length_clamp(en->length);
+            if (a->cur_step >= en->length) a->cur_step = en->length - 1;
+            a->dirty = 1;
+        }
+        if (act == ACT_CONFIRM || act == ACT_BACK || act == ACT_MENU) {
+            clamp_cursor(a);
+            a->mode = MODE_EDIT;
+        }
+        break;
+    }
     case MODE_RCH: {
         int t = a->cur_track;
         switch (act) {
         case ACT_UP:    a->cur_track = (t + N_TRACKS - 1) % N_TRACKS; break;
         case ACT_DOWN:  a->cur_track = (t + 1) % N_TRACKS; break;
-        case ACT_LEFT:  a->cur_step = (a->cur_step + N_STEPS - 1) % N_STEPS; break;
-        case ACT_RIGHT: a->cur_step = (a->cur_step + 1) % N_STEPS; break;
+        case ACT_LEFT:  move_step(a, -1); break;
+        case ACT_RIGHT: move_step(a, 1); break;
         case ACT_CONFIRM: {
             unsigned char r = (unsigned char)((e->rch[t][a->cur_step] + 1) % RCH_COUNT);
             e->rch[t][a->cur_step] = r;
@@ -909,8 +1633,7 @@ static void act(App *a, int act)
                            e->lvl[t][a->cur_step] ? e->lvl[t][a->cur_step] : LVL_ON);
             break;
         case ACT_PLAY:
-            e->playing ^= 1;
-            if (e->playing) e->restart = 1;
+            toggle_edit_play(a);
             break;
         case ACT_MENU: a->mode = MODE_EDIT; break;   /* SELECT backs out of the grid modes */
         case ACT_BACK: a->mode = MODE_EDIT; break;
@@ -936,15 +1659,26 @@ static void act(App *a, int act)
             a->pat_sel += PAT_ROWS;
             if (a->pat_sel > PAT_MAX_SLOTS) a->pat_sel = PAT_MAX_SLOTS;
             break;
-        case ACT_CONFIRM: pattern_do_action(a, 0); break;
-        case ACT_MENU:
-            a->mode = MODE_PAT_ACT;
-            a->pat_act_sel = 0;
+        case ACT_CONFIRM:
+            if (a->pat_pick_target > 0) song_assign_pick(a);
+            else pattern_do_action(a, 0);
             break;
-        case ACT_BACK: a->mode = MODE_EDIT; break;
+        case ACT_MENU:
+            if (a->pat_pick_target == 0) {
+                a->mode = MODE_PAT_ACT;
+                a->pat_act_sel = 0;
+            }
+            break;
+        case ACT_BACK:
+            if (a->pat_pick_target > 0) {
+                a->pat_pick_target = 0;
+                a->mode = MODE_SONG;
+            } else {
+                a->mode = MODE_EDIT;
+            }
+            break;
         case ACT_PLAY:
-            e->playing ^= 1;
-            if (e->playing) e->restart = 1;
+            if (a->pat_pick_target == 0) toggle_edit_play(a);
             break;
         default: break;
         }
@@ -990,9 +1724,73 @@ static void act(App *a, int act)
         case ACT_MENU: pattern_commit_rename(a); break;
         case ACT_BACK: a->mode = MODE_PATTERN; a->pat_sel = a->rename_slot; break;
         case ACT_PLAY:
-            e->playing ^= 1;
-            if (e->playing) e->restart = 1;
+            toggle_edit_play(a);
             break;
+        default: break;
+        }
+        break;
+    case MODE_SONG:
+        switch (act) {
+        case ACT_UP:
+            if (a->song.count > 0)
+                a->song_sel = (a->song_sel + a->song.count - 1) % a->song.count;
+            break;
+        case ACT_DOWN:
+            if (a->song.count > 0)
+                a->song_sel = (a->song_sel + 1) % a->song.count;
+            break;
+        case ACT_LEFT:
+            a->song_sel -= SONG_ROWS;
+            if (a->song_sel < 0) a->song_sel = 0;
+            break;
+        case ACT_RIGHT:
+            if (a->song.count > 0) {
+                a->song_sel += SONG_ROWS;
+                if (a->song_sel >= a->song.count) a->song_sel = a->song.count - 1;
+            }
+            break;
+        case ACT_CONFIRM: song_begin_pick(a); break;
+        case ACT_HEAR:
+        case ACT_HEAR_ALT:
+            if (a->eng.song_playing && a->song.count > 0) {
+                a->song_sel = a->eng.song_bar;
+                if (a->song_sel < 0) a->song_sel = 0;
+                if (a->song_sel >= a->song.count) a->song_sel = a->song.count - 1;
+                set_msg(a, "BAR %03d", a->song_sel + 1);
+            }
+            break;
+        case ACT_PLAY: song_toggle_play(a); break;
+        case ACT_MENU:
+            stop_playback(a);
+            a->mode = MODE_SONG_ACT;
+            a->song_act_sel = 0;
+            break;
+        case ACT_BACK:
+            stop_playback(a);
+            a->mode = MODE_EDIT;
+            break;
+        default: break;
+        }
+        break;
+    case MODE_SONG_ACT:
+        switch (act) {
+        case ACT_UP:
+            a->song_act_sel = (a->song_act_sel + SONG_ACT_N - 1) % SONG_ACT_N;
+            break;
+        case ACT_DOWN:
+            a->song_act_sel = (a->song_act_sel + 1) % SONG_ACT_N;
+            break;
+        case ACT_LEFT:
+            if (a->song.count > 0)
+                a->song_sel = (a->song_sel + a->song.count - 1) % a->song.count;
+            break;
+        case ACT_RIGHT:
+            if (a->song.count > 0)
+                a->song_sel = (a->song_sel + 1) % a->song.count;
+            break;
+        case ACT_CONFIRM: song_do_action(a, a->song_act_sel); break;
+        case ACT_BACK:
+        case ACT_MENU: a->mode = MODE_SONG; break;
         default: break;
         }
         break;
@@ -1063,10 +1861,12 @@ static void handle_shoulder(App *a, int sh, int down)
 /* Open the menu bound to shoulder + direction. Returns 1 when a shortcut fired. */
 static int shortcut_activate(App *a, int sh, int ad)
 {
+    if (a->eng.song_playing) stop_playback(a);
     switch (sh) {
     case SH_L1:
         if (ad == ACT_LEFT)  { a->mode = MODE_TEMPO; return 1; }
         if (ad == ACT_RIGHT) { a->mode = MODE_SWING; return 1; }
+        if (ad == ACT_UP)    { a->mode = MODE_LENGTH; return 1; }
         break;
     case SH_L2:
         if (ad == ACT_LEFT) {
@@ -1093,6 +1893,7 @@ static int shortcut_activate(App *a, int sh, int ad)
  * keep moving the text cursor. */
 static int shortcuts_enabled(const App *a)
 {
+    if (a->pat_pick_target > 0) return 0;
     return a->mode != MODE_RENAME;
 }
 
@@ -1185,7 +1986,7 @@ static int test_shortcuts_run(App *a)
     a->mode = MODE_EDIT;
     handle_shoulder(a, SH_L1, 1);
     input_dir(a, ACT_UP);
-    CHECK(a->mode == MODE_EDIT, "L1+Up is reserved and consumed");
+    CHECK(a->mode == MODE_LENGTH, "L1+Up opens pattern length");
     handle_shoulder(a, SH_L1, 0);
     a->sh_suppress = 0;
 
@@ -1209,9 +2010,127 @@ static int test_shortcuts_run(App *a)
 #undef CHECK
 }
 
-/* Same physical dpad often arrives as BOTH a controller dpad-button and a
- * raw joystick hat (SDL mirrors events for mapped controllers). If both are
- * handled the cursor jumps twice — suppress raw events for mapped controllers. */
+/* Headless pattern-length checks (`--test-length`). */
+static int test_length_run(App *a)
+{
+    int fails = 0;
+    SDL_Init(SDL_INIT_TIMER);
+
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    char path[1200];
+    snprintf(path, sizeof path, "%s/test-length.txt", a->lib.conf_dir);
+
+    Engine e;
+    engine_init(&e, 44100);
+    CHECK(e.length == N_STEPS, "new pattern plays all 16 steps");
+
+    e.length = 5;
+    e.bpm_x100 = 12500;
+    CHECK(pattern_save_file(&e, path) == 0, "pattern with length saves");
+
+    int file_len = 0;
+    FILE *f = fopen(path, "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof line, f))
+            if (!strncmp(line, "LEN ", 4)) file_len = atoi(line + 4);
+        fclose(f);
+    }
+    CHECK(file_len == 5, "LEN line is written");
+
+    Engine r;
+    engine_init(&r, 44100);
+    CHECK(pattern_load_file(&r, path) == 0 && r.length == 5,
+          "length round-trips through the pattern file");
+
+    /* Old pattern files have no LEN line and must keep working as 16 steps. */
+    f = fopen(path, "w");
+    if (f) { fputs("RG808P1\nBPM 120.00\n", f); fclose(f); }
+    engine_init(&r, 44100);
+    CHECK(pattern_load_file(&r, path) == 0 && r.length == N_STEPS,
+          "legacy pattern without LEN defaults to 16");
+
+    /* Values outside 1..16 are clamped on the way to disk. */
+    e.length = 0;
+    pattern_save_file(&e, path);
+    engine_init(&r, 44100);
+    pattern_load_file(&r, path);
+    CHECK(r.length == 1, "length below 1 clamps to 1");
+    e.length = 99;
+    pattern_save_file(&e, path);
+    engine_init(&r, 44100);
+    pattern_load_file(&r, path);
+    CHECK(r.length == N_STEPS, "length above 16 clamps to 16");
+    remove(path);
+
+    /* Live clock: 125 BPM -> exactly 5292 frames per 16th. */
+    const int sps = 5292;
+    float buf[1024 * 2];
+    Engine ex;
+    engine_init(&ex, 44100);
+    ex.length = 5;
+    ex.bpm_x100 = 12500;
+    ex.playing = 1;
+    engine_restart(&ex);
+    int done = 0;
+    while (done < sps * 5 - 1) {
+        int n = (sps * 5 - 1 - done) > 1024 ? 1024 : (sps * 5 - 1 - done);
+        engine_mix(&ex, buf, n);
+        done += n;
+    }
+    CHECK(ex.cur_step == 4, "clock stops the bar at the pattern length");
+    engine_mix(&ex, buf, 1);
+    CHECK(ex.cur_step == 0, "clock wraps to step 1 after the pattern length");
+
+    /* Song snapshots: each bar uses its own length for both timing and end. */
+    SongSet *set = calloc(1, sizeof(SongSet));
+    if (set) {
+        set->count = 2;
+        for (int i = 0; i < 2; i++) {
+            pattern_default_snapshot(&set->pat[i]);
+            set->pat[i].bpm_x100 = 12500;
+            set->pat[i].length = 5;
+        }
+        CHECK(song_total_frames(set, 44100, 0) == (long long)sps * 5 * 2,
+              "song length math follows per-pattern lengths");
+
+        Engine sx;
+        engine_init(&sx, 44100);
+        engine_song_start(&sx, set, 0, 0);
+        engine_restart(&sx);
+        done = 0;
+        while (done < sps * 5 - 1) {
+            int n = (sps * 5 - 1 - done) > 1024 ? 1024 : (sps * 5 - 1 - done);
+            engine_mix(&sx, buf, n);
+            done += n;
+        }
+        CHECK(sx.song_bar == 0 && sx.cur_step == 4,
+              "song stays in a short bar until its last step");
+        engine_mix(&sx, buf, 1);
+        CHECK(sx.song_bar == 1 && sx.cur_step == 0,
+              "song advances on the pattern's length");
+        done = 0;
+        while (done < sps * 5 - 1) {
+            int n = (sps * 5 - 1 - done) > 1024 ? 1024 : (sps * 5 - 1 - done);
+            engine_mix(&sx, buf, n);
+            done += n;
+        }
+        engine_mix(&sx, buf, 1);
+        CHECK(sx.song_playing == 0 && sx.song_done == 1,
+              "song ends after the last short bar");
+    } else {
+        CHECK(0, "length test snapshot allocation");
+    }
+    free(set);
+
+    SDL_Quit();
+    return fails ? 1 : 0;
+#undef CHECK
+}
 static int joy_covered_by_controller(SDL_JoystickID which)
 {
     return SDL_GameControllerFromInstanceID(which) != NULL;
@@ -1387,8 +2306,9 @@ static int run_bounce(App *a, const char *outpath, int loops)
     if (load_current(a) != 0) demo_pattern(a);
     a->eng.playing = 1;
     engine_restart(&a->eng);
+    int len = engine_length_clamp(a->eng.length);
     double sps = 60.0 * rate / (a->eng.bpm_x100 / 100.0 * 4.0);
-    long total = (long)(sps * N_STEPS * loops) + 8192;   /* tail so last hits finish */
+    long total = (long)(sps * len * loops) + 8192;   /* tail so last hits finish */
     float *buf = malloc(sizeof(float) * 2 * 1024);
     /* render in chunks into one big buffer (loops<=8 stays small) */
     float *all = malloc(sizeof(float) * 2 * ((size_t)total + 64));
@@ -1422,7 +2342,10 @@ int main(int argc, char **argv)
     int pattern_arg = 0;
     int save_slot_arg = 0;
     int save_slot_set = 0;
+    int song_bounce = 0;
     int test_shortcuts = 0;
+    int test_song = 0;
+    int test_length = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -1435,11 +2358,15 @@ int main(int argc, char **argv)
             save_slot_arg = atoi(argv[++i]);
             save_slot_set = 1;
         }
+        else if (!strcmp(argv[i], "--song")) song_bounce = 1;
         else if (!strcmp(argv[i], "--test-shortcuts")) test_shortcuts = 1;
+        else if (!strcmp(argv[i], "--test-song")) test_song = 1;
+        else if (!strcmp(argv[i], "--test-length")) test_length = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
-                   " [--bounce out.wav --loops N] [--test-shortcuts]"
-                   " [--screenshot out.bmp [--mode edit|kit|rch|swing|menu|tempo|pattern|l1|l2|r1|r2]]\n");
+                   " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
+                   " [--test-shortcuts] [--test-song] [--test-length]"
+                   " [--screenshot out.bmp [--mode edit|kit|rch|swing|length|menu|tempo|pattern|song|songact|export|l1|l2|r1|r2]]\n");
             return 0;
         }
     }
@@ -1459,12 +2386,15 @@ int main(int argc, char **argv)
         return test_shortcuts_run(&a);
     }
 
-    if (bounce || save_slot_set) {
+    if (bounce || save_slot_set || song_bounce || test_song || test_length) {
         samples_load_all(assets, 44100);
         resolve_conf(&a, base ? base : ".");
         if (pattern_arg >= 1 && pattern_arg <= PAT_MAX_SLOTS)
             pattern_set_active(&a.lib, pattern_arg);
         SDL_free(base);
+
+        if (test_song) return test_song_run(&a);
+        if (test_length) return test_length_run(&a);
 
         if (save_slot_set) {
             engine_init(&a.eng, 44100);
@@ -1480,6 +2410,30 @@ int main(int argc, char **argv)
             printf("rg808: saved P%03d -> P%03d (%s)\n", a.lib.active_slot,
                    save_slot_arg, pattern_name(&a.lib, save_slot_arg));
             return 0;
+        }
+
+        if (song_bounce) {
+            song_init(&a.song);
+            song_load(&a.song, a.song_path);
+            if (a.song.count <= 0) {
+                fprintf(stderr, "rg808: song is empty (%s)\n", a.song_path);
+                return 1;
+            }
+            SongSet *set = calloc(1, sizeof(SongSet));
+            if (!set) return 1;
+            int missing = song_build_set(&a.song, &a.lib, set);
+            const char *out = bounce ? bounce : a.song_wav_path;
+            int rc = render_song_wav(&a, set, out, 0);
+            if (rc == 0) {
+                long long frames = song_total_frames(set, 44100, 44100 * 2);
+                printf("rg808: song exported: %d bars, %lld frames (%.2fs)%s -> %s\n",
+                       set->count, frames, (double)frames / 44100.0,
+                       missing ? " (some bars empty)" : "", out);
+            } else {
+                fprintf(stderr, "rg808: song export failed\n");
+            }
+            free(set);
+            return rc;
         }
 
         int rc = run_bounce(&a, bounce, bounce_loops);
@@ -1510,6 +2464,19 @@ int main(int argc, char **argv)
         pattern_set_active(&a.lib, pattern_arg);
     SDL_free(base);
 
+    a.song_sets[0] = calloc(1, sizeof(SongSet));
+    a.song_sets[1] = calloc(1, sizeof(SongSet));
+    if (!a.song_sets[0] || !a.song_sets[1]) {
+        fprintf(stderr, "rg808: out of memory for song snapshots\n");
+        if (a.dev) SDL_CloseAudioDevice(a.dev);
+        SDL_Quit();
+        return 1;
+    }
+    song_init(&a.song);
+    song_load(&a.song, a.song_path);
+    a.song_sel = 0;
+    a.song_last_save = SDL_GetTicks();
+
     int missing = samples_load_all(assets, 44100);
     if (missing > 0) fprintf(stderr, "rg808: %d track(s) have no samples in %s\n", missing, assets);
 
@@ -1529,6 +2496,7 @@ int main(int argc, char **argv)
             if (!strcmp(mode_arg, "kit"))   { a.mode = MODE_KIT; a.cur_step = a.eng.kit[a.cur_track]; }
             else if (!strcmp(mode_arg, "rch"))   a.mode = MODE_RCH;
             else if (!strcmp(mode_arg, "swing")) a.mode = MODE_SWING;
+            else if (!strcmp(mode_arg, "length")) a.mode = MODE_LENGTH;
             else if (!strcmp(mode_arg, "menu"))  a.mode = MODE_MENU;
             else if (!strcmp(mode_arg, "tempo")) a.mode = MODE_TEMPO;
             else if (!strcmp(mode_arg, "pattern")) {
@@ -1541,6 +2509,17 @@ int main(int argc, char **argv)
                 a.mode = MODE_RENAME;
                 a.pat_sel = a.lib.active_slot;
                 pattern_begin_rename(&a, a.pat_sel);
+            } else if (!strcmp(mode_arg, "song")) {
+                a.mode = MODE_SONG;
+                a.song_sel = 0;
+            } else if (!strcmp(mode_arg, "songact")) {
+                a.mode = MODE_SONG_ACT;
+                a.song_sel = 0;
+                a.song_act_sel = 0;
+            } else if (!strcmp(mode_arg, "export")) {
+                a.mode = MODE_EXPORT;
+                a.export_progress = 500;
+                snprintf(a.export_display, sizeof a.export_display, "conf/song.wav");
             } else if (!strcmp(mode_arg, "l1")) {
                 a.sh_last = SH_L1; a.shortcut_until = SDL_GetTicks() + 60000;
             } else if (!strcmp(mode_arg, "l2")) {
@@ -1625,18 +2604,30 @@ int main(int argc, char **argv)
         } else if (a.sh_suppress) {
             a.sh_suppress = 0;
         }
+        if (a.eng.song_done) {
+            a.eng.song_done = 0;
+            set_msg(&a, "SONG ENDED");
+        }
         /* periodic autosave: kills/HOME-exit shouldn't lose the groove */
         if (a.dirty && (int)(now - a.last_save) > 5000) {
             if (save_current(&a) == 0) a.dirty = 0;
             else set_msg(&a, "AUTOSAVE FAILED");
             a.last_save = now;
         }
+        if (a.song_dirty && (int)(now - a.song_last_save) > 5000) {
+            if (song_save(&a.song, a.song_path) == 0) a.song_dirty = 0;
+            else set_msg(&a, "SONG SAVE FAILED");
+            a.song_last_save = now;
+        }
         draw_ui(&a);
         present(&a);
     }
 
     if (a.dirty) save_current(&a);
+    if (a.song_dirty) song_save(&a.song, a.song_path);
     if (a.dev) SDL_CloseAudioDevice(a.dev);
+    free(a.song_sets[0]);
+    free(a.song_sets[1]);
     SDL_Quit();
     return 0;
 }

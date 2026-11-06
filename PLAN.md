@@ -1,7 +1,7 @@
 # RG-808 Development Plan
 
 Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster).
-16-step sequencer, single pattern, 11 classic voices, per-step accents.
+1–16-step sequencer, single pattern, 11 classic voices, per-step accents.
 
 ## Application stack (decided 2026-11-06)
 
@@ -102,19 +102,36 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
   - [x] Verified by `tools/test-m7.ps1` (migration, no re-import, save/reload
     bit-identical, index active/name, no `.tmp` leftovers) plus browser and
     rename screenshots; existing M6/kit/round-trip tests still pass.
-- [ ] **M8 — Song mode** *(todo: chain up to 512 patterns; save song as WAV) — requires M7*
-  - Song data: ordered chain of pattern slots (1 bar per entry, up to 512 entries);
-    per-pattern BPM applies on each switch (bpm lives with the pattern, as today).
-  - Engine: at loop boundary, audio thread swaps the pattern snapshot pointer
-    (double-buffered snapshot set prepared by UI thread — first real data-structure
-    change of the engine, keep the race-free design).
-  - UI: SONG page — list editor (pattern number per bar, insert/delete/shift,
-    jump-to-playbar).
-  - **WAV export**: streaming renderer (chunk loop writing straight to the file —
-    today's `--bounce` holds the whole render in RAM, which would explode for a
-    512-bar song); progress bar; output 44.1 k/16 stereo.
-  - Risks/acceptance: song length math, gapless pattern switches at 250 BPM,
-    export bit-exact vs live playback on the first 4 bars.
+- [x] **M8 — Song mode** *(todo: chain up to 512 patterns; save song as WAV) — requires M7*
+  - [x] Song data: ordered chain of pattern slots (1 bar per entry, up to 512
+    entries) in `conf/song.txt`; per-pattern BPM/swing/length/kit/ratchets
+    apply on each bar switch.
+  - [x] Engine: immutable `SongSet` snapshot arrays prepared by the UI thread
+    (two buffers), audio thread advances the snapshot pointer at every bar
+    boundary; per-bar BPM recomputed for the next step so switches are gapless.
+  - [x] UI: SONG page — bar list with pattern names, picker, insert/delete/
+    move, play-from-here, loop toggle, jump-to-playing-bar, save/clear.
+  - [x] **WAV export**: streaming renderer writes chunks straight to disk
+    (header patched at close), progress bar, 44.1 kHz/16 stereo, one pass plus
+    a two-second tail.
+  - [x] Verified by `tools/test-m8.ps1` (persistence, snapshot BPMs, song
+    length math, non-loop end, loop wrap, UI actions, 250 BPM bar switch,
+    first-bar bit-exact vs a normal pattern bounce) plus song/action/export
+    screenshots.
+- [x] **M8.5 — Pattern length** *(pre-M9; per-pattern 1–16 steps)*
+  - [x] Engine: `length` in the live engine and in every `PatternSnapshot`;
+    the 16th clock wraps on the pattern length, and song bars advance on
+    each bar's own length. Bounce length math uses it too.
+  - [x] Persistence: `LEN <n>` line per pattern, clamped to 1–16; files from
+    older builds (no `LEN`) load as 16 steps.
+  - [x] UI: menu → PATTERN LENGTH (also L1+Up), up/down ±1 and left/right ±4;
+    steps past the end are shown dimmed with an end marker, and the edit
+    cursor wraps inside the active length. Header shows `LEN nn` (and the
+    current song bar's length while playing a song).
+  - [x] Verified by `tools/test-length.ps1` / `--test-length` (round-trip,
+    legacy default, clamps, live clock wrap, per-bar song length/end) and
+    bounce/song-export frame counts for LEN 1/4/8/16 plus the length-editor
+    screenshot.
 - [ ] **M9 — Effects** *(todo: compression/overdrive/distortion — one; flanger/phaser —
   one; delay; reverb) — independent of M6–M8, last because of CPU risk*
   - Scope per the "either/or" note: master chain
@@ -152,6 +169,16 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
   D-pad-shaped hint overlay. L1/R1 no longer change tempo directly.
   Verified by `tools/test-shortcuts.ps1` (headless mapping test) plus
   `--mode l1|l2|r1|r2` hint screenshots.
+- M8 shipped (PC + cross-build): 512-bar song chains (`conf/song.txt`),
+  immutable double-buffered snapshot sets, per-bar BPM/swing/kit, song page
+  with picker/insert/delete/move/play-from-here/loop/jump, streaming
+  `conf/song.wav` export with progress bar. Verified by
+  `tools/test-m8.ps1` (persistence, 250 BPM switch, loop/end, UI actions,
+  first-bar bit-exact vs pattern bounce).
+- M8.5 shipped (PC): per-pattern length 1–16 (`LEN` in the pattern file),
+  live-clock wrap and per-bar song timing, menu/L1+Up editor, dimmed tail
+  steps with an end marker. Verified by `tools/test-length.ps1` plus
+  `--test-length`.
 - **First real-device session (2026-11-06): the port boots and runs on the SP.**
   Only issue found: D-pad double-fire (fixed in `src/main.c`, rebuilt zip —
   awaiting on-device retest).
@@ -180,9 +207,11 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
    SELECT, L/R) all correct? If clean → swap in a device screenshot, refresh the
    zip, and M3/M5 can close.
 4. Then pick the v2 entry point (proposal: M3 validation → M6 → M7 → M8; M9 anytime).
-   M6/M7 are done on PC; M8 (song mode) is next, and the device still needs the
-   M6/M7 control pass (pattern browser + rename with the real D-pad).
+   M6/M7/M8/M8.5 are done on PC; M9 (effects) is next, and the device still needs the
+   M6/M7/M8/M8.5 control pass (pattern browser, song page and export, pattern length).
 5. Device: check the shoulder shortcut layer — L1/L2/R1/R2 hint overlay and the
-   L1+Left/Right, L2+Left and R1+Left/Right mappings. L2/R2 are read from SDL's
+   L1+Left/Right/Up, L2+Left and R1+Left/Right mappings. L2/R2 are read from SDL's
    trigger axes (and raw joystick axes 4/5); R2 currently only shows the reserved
    hint. If the SP maps them differently, pin it from the device's gamecontrollerdb.
+6. Device: play a short song chain and run EXPORT WAV; confirm gapless bar
+   switches, per-bar tempo changes and that `conf/song.wav` plays back cleanly.

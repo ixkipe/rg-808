@@ -106,28 +106,90 @@ int wav_load(const char *path, int target_rate, WavAudio *out)
     return 0;
 }
 
+static void put_u32le(unsigned char *p, unsigned int v)
+{
+    p[0] = (unsigned char)(v & 0xff);
+    p[1] = (unsigned char)((v >> 8) & 0xff);
+    p[2] = (unsigned char)((v >> 16) & 0xff);
+    p[3] = (unsigned char)((v >> 24) & 0xff);
+}
+
+static void write_wav_header(FILE *f, unsigned int data_bytes, int rate)
+{
+    unsigned char h[44] = {0};
+    unsigned int riff = 36u + data_bytes;
+    memcpy(h, "RIFF", 4); put_u32le(h + 4, riff);
+    memcpy(h + 8, "WAVEfmt ", 8);
+    put_u32le(h + 16, 16);
+    h[20] = 1;                       /* PCM */
+    h[22] = 2;                       /* stereo */
+    put_u32le(h + 24, (unsigned int)rate);
+    put_u32le(h + 28, (unsigned int)rate * 4u);
+    h[32] = 4;                       /* block align */
+    h[34] = 16;                      /* bits per sample */
+    memcpy(h + 36, "data", 4); put_u32le(h + 40, data_bytes);
+    fwrite(h, 1, 44, f);
+}
+
+int wav_writer_open(WavWriter *w, const char *path, int rate)
+{
+    memset(w, 0, sizeof *w);
+    w->rate = rate;
+    w->f = fopen(path, "wb");
+    if (!w->f) return -1;
+    unsigned char zero[44] = {0};
+    if (fwrite(zero, 1, 44, w->f) != 44) {
+        fclose(w->f);
+        w->f = NULL;
+        return -1;
+    }
+    return 0;
+}
+
+int wav_writer_write(WavWriter *w, const float *interleaved, int frames)
+{
+    if (!w->f || frames < 0) return -1;
+    while (frames > 0) {
+        int n = frames > 1024 ? 1024 : frames;
+        unsigned char out[4096];
+        for (int i = 0; i < 2 * n; i++) {
+            float x = interleaved[i];
+            if (x > 1.0f) x = 1.0f;
+            if (x < -1.0f) x = -1.0f;
+            short s = (short)(x * 32767.0f);
+            out[2 * i] = (unsigned char)(s & 0xff);
+            out[2 * i + 1] = (unsigned char)(((unsigned short)s >> 8) & 0xff);
+        }
+        if (fwrite(out, 1, (size_t)2 * 2 * n, w->f) != (size_t)2 * 2 * n)
+            return -1;
+        w->frames += (unsigned int)n;
+        interleaved += 2 * n;
+        frames -= n;
+    }
+    return 0;
+}
+
+int wav_writer_close(WavWriter *w)
+{
+    if (!w->f) return -1;
+    int ok = fflush(w->f) == 0;
+    if (ok) ok = fseek(w->f, 0, SEEK_SET) == 0;
+    if (ok) {
+        write_wav_header(w->f, w->frames * 4u, w->rate);
+        if (ferror(w->f)) ok = 0;
+    }
+    if (fclose(w->f) != 0) ok = 0;
+    w->f = NULL;
+    return ok ? 0 : -1;
+}
+
 int wav_write_stereo16(const char *path, const float *interleaved, int frames, int rate)
 {
-    FILE *f = fopen(path, "wb");
-    if (!f) return -1;
-    unsigned int data = (unsigned)frames * 4u;
-    unsigned int riff = 36u + data;
-    unsigned char h[44] = {0};
-    memcpy(h, "RIFF", 4); h[4]=riff; h[5]=riff>>8; h[6]=riff>>16; h[7]=riff>>24;
-    memcpy(h+8, "WAVEfmt ", 8);
-    h[16]=16; h[20]=1; h[22]=2; h[24]=rate; h[25]=rate>>8; h[26]=rate>>16; h[27]=rate>>24;
-    unsigned int br = (unsigned)rate*4; h[28]=br; h[29]=br>>8; h[30]=br>>16; h[31]=br>>24;
-    h[32]=4; h[34]=16;
-    memcpy(h+36, "data", 4); h[40]=data; h[41]=data>>8; h[42]=data>>16; h[43]=data>>24;
-    fwrite(h, 1, 44, f);
-    for (long i = 0; i < (long)frames * 2; i++) {
-        float x = interleaved[i];
-        if (x > 1.0f) x = 1.0f;
-        if (x < -1.0f) x = -1.0f;
-        short s = (short)(x * 32767.0f);
-        unsigned char b[2] = { (unsigned char)(s & 0xff), (unsigned char)(((unsigned short)s >> 8) & 0xff) };
-        fwrite(b, 1, 2, f);
+    WavWriter w;
+    if (wav_writer_open(&w, path, rate) != 0) return -1;
+    if (wav_writer_write(&w, interleaved, frames) != 0) {
+        fclose(w.f);
+        return -1;
     }
-    fclose(f);
-    return 0;
+    return wav_writer_close(&w);
 }

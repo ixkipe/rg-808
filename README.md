@@ -1,8 +1,9 @@
 # RG-808 — a Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster)
 
-A 16-step, 11-track drum machine written in C with SDL2, packaged as a
+A 1–16-step, 11-track drum machine written in C with SDL2, packaged as a
 PortMaster "ready-to-run" port. Per-step accents, sample-accurate sequencing,
-a 200-slot pattern library, 640×480 native UI, D-pad driven.
+a 200-slot pattern library, song chains with WAV export, 640×480 native UI,
+D-pad driven.
 
 > **Disclaimer: this project was made with AI.** All of the source code, build
 > and packaging tooling, documentation and planning in this repository were
@@ -35,6 +36,10 @@ Useful CLI modes (no audio device needed):
 rg808.exe --bounce out.wav --loops 4    # render the active pattern to WAV
 rg808.exe --pattern 12 --bounce out.wav # render pattern slot 12
 rg808.exe --pattern 1 --save-slot 7     # headless copy slot 1 -> 7
+rg808.exe --song --bounce song.wav      # render the song chain once
+rg808.exe --song                        # export to conf/song.wav
+rg808.exe --test-song                   # headless song checks
+rg808.exe --test-length                 # headless pattern-length checks
 rg808.exe --screenshot shot.bmp         # render one UI frame to BMP
 rg808.exe --screenshot p.bmp --mode pattern   # pattern browser frame
 ```
@@ -75,7 +80,7 @@ tools\device\probe.sh > probe.txt 2>&1     # in Mustard Terminal
 | B | Clear step (back in menus) |
 | X / Y | Hear sound of the selected track |
 | START | Play / stop |
-| SELECT | Menu (tempo, swing, ratchets, kits, save, pattern library, clear all, quit) |
+| SELECT | Menu (tempo, swing, pattern length, ratchets, kits, save, pattern library, song mode, clear all, quit) |
 | L1 / L2 / R1 / R2 | Shoulder shortcuts — hold one and a D-pad hint appears |
 
 **Shoulder shortcuts**: hold a shoulder button and the UI shows a D-pad-shaped
@@ -85,16 +90,22 @@ cheat sheet for that button. The assigned combinations are:
 |--|--|
 | L1 + Left | Tempo |
 | L1 + Right | Swing |
+| L1 + Up | Pattern length |
 | L2 + Left | Pattern library |
 | R1 + Left | Sample/kit selection |
 | R1 + Right | Ratchet notes |
 | R2 | reserved |
 
-Other combinations are reserved for future features (song mode, effects, …).
-Pressing a shoulder shows the hint; releasing it hides the hint immediately.
+Other combinations are reserved for future features (effects, per-track
+controls, …). Pressing a shoulder shows the hint; releasing it hides the hint
+immediately.
 
 **Swing**: menu → EDIT SWING; 0–100 % shuffles every even 16th late
-(~67 % ≈ triplet feel). **Ratchets**: menu → RATCHET NOTES turns the grid into
+(~67 % ≈ triplet feel). **Pattern length**: menu → PATTERN LENGTH (or L1 + Up)
+sets how many of the 16 steps play, from 1 to 16 (up/down ±1, left/right ±4).
+Steps past the end stay visible but dimmed, so shortening and re-expanding a
+pattern never destroys hidden notes; the cursor wraps at the last played step.
+**Ratchets**: menu → RATCHET NOTES turns the grid into
 a roll editor — A cycles each step through 2× / 3× / 4× rolls and flam
 (digit drawn in the cell); in kit mode (menu → SELECT KITS) D-Pad rows =
 instruments, columns = sample variants (numbered boxes); A selects +
@@ -111,11 +122,22 @@ SELECT saves), DELETE and CANCEL. The active slot number and name are shown
 in the header; edits autosave into that slot. A legacy `conf/pattern.txt`
 from v1 is imported into slot 001 on first run.
 
+**Song mode**: menu → SONG MODE chains up to 512 bars, one pattern slot per
+bar. A picks the pattern for the selected bar (the pattern browser opens in
+pick mode), D-Pad up/down selects, left/right pages by 12, X jumps the cursor
+to the bar currently playing, and START plays/stops the chain. SELECT opens
+the song actions: INSERT BAR, DELETE BAR, MOVE BAR UP/DOWN, PLAY FROM HERE,
+LOOP ON/OFF, EXPORT WAV, SAVE SONG, CLEAR SONG and CANCEL. Each bar uses the
+BPM, swing, length, ratchets and kit stored in its pattern. The chain is saved in
+`conf/song.txt`; EXPORT WAV streams the whole song to `conf/song.wav` with a
+progress bar (44.1 kHz/16-bit stereo, one pass plus a two-second tail).
+
 Your pattern and tempo are saved automatically on quit (menu: QUIT) and can be
 saved/loaded manually. Patterns live in `conf/patterns/NNN.txt`, with slot
-names and the active slot in `conf/patterns/index.txt` inside the port folder
-on the card. Writes go to a temp file, are flushed, then renamed into place,
-so an interrupted save never truncates a pattern.
+names and the active slot in `conf/patterns/index.txt`; the song chain lives
+in `conf/song.txt` inside the port folder on the card. Writes go to a temp
+file, are flushed, then renamed into place, so an interrupted save never
+truncates a pattern or the song.
 
 ## Kit mapping
 Each voice ships its whole variant family from the pack as `<id>NN.wav`
@@ -127,8 +149,9 @@ the `dflt` column in `src/engine.c`.
 - v1: single pattern, 11 tracks, accents, sample selection per voice
   (kit mode), save.
 - v2 (in progress): swing + ratchets (M6), 200-slot pattern library with
-  rename/copy/delete and legacy import (M7), shoulder shortcut layer.
-  Next: song mode, effects, per-track volume/mute.
+  rename/copy/delete and legacy import (M7), shoulder shortcut layer, song
+  chains with streaming WAV export (M8), per-pattern length 1–16. Next:
+  effects, per-track volume/mute.
 
 ## Credits & licences
 Code: this project (MIT where not otherwise noted). SDL2 (zlib), public-domain

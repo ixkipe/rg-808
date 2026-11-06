@@ -38,6 +38,13 @@ int pattern_slot_exists(const PatternLib *lib, int slot);
 const char *pattern_name(const PatternLib *lib, int slot);
 void pattern_default_name(int slot, char *dst, size_t cap);
 
+/* Snapshot helpers used by song mode: parse a slot without touching an Engine. */
+void pattern_default_snapshot(PatternSnapshot *s);
+int pattern_load_snapshot(const PatternLib *lib, int slot, PatternSnapshot *s);
+
+/* Atomic write shared by the pattern and song stores. */
+int pattern_write_atomic(const char *path, const void *data, size_t len);
+
 /* File-level helpers: the legacy RG808_CONF override and automated tests. */
 int pattern_save_file(Engine *e, const char *path);
 int pattern_load_file(Engine *e, const char *path);

@@ -82,7 +82,7 @@ static void sync_parent_dir(const char *path)
 /* Write bytes to path.tmp, flush+fsync, then atomically replace path. On the
  * device (Linux/SD card) rename() is atomic, so a power cut leaves either the
  * old file or the new one — never a truncated pattern. */
-static int write_atomic(const char *path, const void *data, size_t len)
+int pattern_write_atomic(const char *path, const void *data, size_t len)
 {
     char tmp[1200];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
@@ -141,7 +141,7 @@ static int copy_file_atomic(const char *src, const char *dst)
     char *data;
     size_t len;
     if (read_file(src, &data, &len) != 0) return -1;
-    int rc = write_atomic(dst, data, len);
+    int rc = pattern_write_atomic(dst, data, len);
     free(data);
     return rc;
 }
@@ -221,7 +221,7 @@ static int save_index(const PatternLib *lib)
         n += (size_t)w;
         if (n >= sizeof buf) { n = sizeof buf - 1; break; }
     }
-    return write_atomic(lib->index_path, buf, n);
+    return pattern_write_atomic(lib->index_path, buf, n);
 }
 
 static void load_index(PatternLib *lib)
@@ -314,17 +314,95 @@ int pattern_set_active(PatternLib *lib, int slot)
 
 /* --------------------------------------------------------------- pattern io */
 
-static void reset_engine_pattern(Engine *e)
+void pattern_default_snapshot(PatternSnapshot *s)
 {
-    e->bpm_x100 = 12000;
-    e->swing_pct = 0;
+    memset(s, 0, sizeof *s);
+    s->bpm_x100 = 12000;
+    s->swing_pct = 0;
+    s->length = N_STEPS;
+    for (int t = 0; t < N_TRACKS; t++)
+        s->kit[t] = TRACKS[t].dflt - 1;
+    s->slot = 0;
+}
+
+static void copy_snapshot_to_engine(Engine *e, const PatternSnapshot *s)
+{
+    e->bpm_x100 = s->bpm_x100;
+    e->swing_pct = s->swing_pct;
+    e->length = engine_length_clamp(s->length);
     for (int t = 0; t < N_TRACKS; t++) {
-        for (int s = 0; s < N_STEPS; s++) {
-            e->lvl[t][s] = LVL_OFF;
-            e->rch[t][s] = RCH_OFF;
+        for (int st = 0; st < N_STEPS; st++) {
+            e->lvl[t][st] = s->lvl[t][st];
+            e->rch[t][st] = s->rch[t][st];
         }
-        e->kit[t] = TRACKS[t].dflt - 1;
+        e->kit[t] = s->kit[t];
     }
+}
+
+static int parse_pattern_stream(FILE *f, PatternSnapshot *s)
+{
+    char line[256];
+    int got_any = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (!strncmp(line, "BPM ", 4)) {
+            double bpm = atof(line + 4);
+            if (bpm < 4) bpm = 4;
+            if (bpm > 300) bpm = 300;
+            s->bpm_x100 = (int)(bpm * 100);
+            got_any = 1;
+        } else {
+            char lab[8] = { 0 };
+            if (!strncmp(line, "SWING ", 6)) {
+                int sw = atoi(line + 6);
+                if (sw < 0) sw = 0;
+                if (sw > 100) sw = 100;
+                s->swing_pct = sw;
+                got_any = 1;
+            } else if (!strncmp(line, "LEN ", 4)) {
+                s->length = engine_length_clamp(atoi(line + 4));
+                got_any = 1;
+            } else if (!strncmp(line, "KIT ", 4)) {
+                int idx = 0;
+                if (sscanf(line + 4, "%4s %d", lab, &idx) == 2) {
+                    for (int t = 0; t < N_TRACKS; t++) {
+                        if (!strcmp(lab, TRACKS[t].label)) {
+                            int cnt = variant_count(t);
+                            if (cnt && idx < 1) idx = 1;
+                            if (cnt && idx > cnt) idx = cnt;
+                            if (cnt) s->kit[t] = idx - 1;
+                            break;
+                        }
+                    }
+                }
+            } else if (!strncmp(line, "RCH ", 4)) {
+                if (sscanf(line + 4, "%4s", lab) == 1) {
+                    for (int t = 0; t < N_TRACKS; t++) {
+                        if (!strcmp(lab, TRACKS[t].label)) {
+                            char *p = strchr(line + 4, ' ');
+                            int n = 0;
+                            for (; p && *p; p++)
+                                if (*p >= '0' && *p <= '4' && n < N_STEPS)
+                                    s->rch[t][n++] = (unsigned char)(*p - '0');
+                            break;
+                        }
+                    }
+                }
+            } else if (sscanf(line, "%4s", lab) == 1) {
+                for (int t = 0; t < N_TRACKS; t++) {
+                    if (!strcmp(lab, TRACKS[t].label)) {
+                        char *p = strchr(line, ' ');
+                        int n = 0;
+                        for (; p && *p; p++)
+                            if (*p >= '0' && *p <= '2' && n < N_STEPS)
+                                s->lvl[t][n++] = (unsigned char)(*p - '0');
+                        if (n == N_STEPS) got_any = 1;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    return got_any ? 0 : -2;
 }
 
 static int write_pattern_stream(FILE *f, Engine *e)
@@ -344,6 +422,7 @@ static int write_pattern_stream(FILE *f, Engine *e)
     for (int t = 0; t < N_TRACKS; t++)
         fprintf(f, "KIT %s %d\n", TRACKS[t].label, e->kit[t] + 1);
     fprintf(f, "SWING %d\n", e->swing_pct);
+    fprintf(f, "LEN %d\n", engine_length_clamp(e->length));
     return ferror(f) ? -1 : 0;
 }
 
@@ -384,67 +463,27 @@ int pattern_load_file(Engine *e, const char *path)
     FILE *f = fopen(path, "r");
     if (!f) return -1;
 
-    reset_engine_pattern(e);
-    char line[256];
-    int got_any = 0;
-    while (fgets(line, sizeof line, f)) {
-        if (!strncmp(line, "BPM ", 4)) {
-            double bpm = atof(line + 4);
-            if (bpm < 4) bpm = 4;
-            if (bpm > 300) bpm = 300;
-            e->bpm_x100 = (int)(bpm * 100);
-            got_any = 1;
-        } else {
-            char lab[8] = { 0 };
-            if (!strncmp(line, "SWING ", 6)) {
-                int sw = atoi(line + 6);
-                if (sw < 0) sw = 0;
-                if (sw > 100) sw = 100;
-                e->swing_pct = sw;
-                got_any = 1;
-            } else if (!strncmp(line, "KIT ", 4)) {
-                int idx = 0;
-                if (sscanf(line + 4, "%4s %d", lab, &idx) == 2) {
-                    for (int t = 0; t < N_TRACKS; t++) {
-                        if (!strcmp(lab, TRACKS[t].label)) {
-                            int cnt = variant_count(t);
-                            if (cnt && idx < 1) idx = 1;
-                            if (cnt && idx > cnt) idx = cnt;
-                            if (cnt) e->kit[t] = idx - 1;
-                            break;
-                        }
-                    }
-                }
-            } else if (!strncmp(line, "RCH ", 4)) {
-                if (sscanf(line + 4, "%4s", lab) == 1) {
-                    for (int t = 0; t < N_TRACKS; t++) {
-                        if (!strcmp(lab, TRACKS[t].label)) {
-                            char *p = strchr(line + 4, ' ');
-                            int n = 0;
-                            for (; p && *p; p++)
-                                if (*p >= '0' && *p <= '4' && n < N_STEPS)
-                                    e->rch[t][n++] = (unsigned char)(*p - '0');
-                            break;
-                        }
-                    }
-                }
-            } else if (sscanf(line, "%4s", lab) == 1) {
-                for (int t = 0; t < N_TRACKS; t++) {
-                    if (!strcmp(lab, TRACKS[t].label)) {
-                        char *p = strchr(line, ' ');
-                        int n = 0;
-                        for (; p && *p; p++)
-                            if (*p >= '0' && *p <= '2' && n < N_STEPS)
-                                e->lvl[t][n++] = (unsigned char)(*p - '0');
-                        if (n == N_STEPS) got_any = 1;
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    PatternSnapshot s;
+    pattern_default_snapshot(&s);
+    int rc = parse_pattern_stream(f, &s);
     fclose(f);
-    return got_any ? 0 : -2;
+    copy_snapshot_to_engine(e, &s);
+    return rc;
+}
+
+int pattern_load_snapshot(const PatternLib *lib, int slot, PatternSnapshot *s)
+{
+    pattern_default_snapshot(s);
+    s->slot = slot;
+    if (!pattern_slot_exists(lib, slot)) return -1;
+
+    char path[1200];
+    slot_path(lib, slot, path, sizeof path);
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    int rc = parse_pattern_stream(f, s);
+    fclose(f);
+    return rc;
 }
 
 int pattern_file_exists(const char *path)

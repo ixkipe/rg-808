@@ -11,7 +11,7 @@
     "porter": [
       "vistor"
     ],
-    "desc": "A Roland TR-808 style drum machine: 16-step sequencer with 11 classic voices (BD, SD, toms, hats, clave, clap, cowbell, cymbal), per-step accents, swing, ratchet rolls/flams, per-voice sample selection (up to 16 kit variants), sample-accurate timing and a 200-slot pattern library. Built with C and SDL2 for 640x480 handhelds.",
+    "desc": "A Roland TR-808 style drum machine: 1-16-step sequencer with 11 classic voices (BD, SD, toms, hats, clave, clap, cowbell, cymbal), per-step accents, swing, ratchet rolls/flams, per-voice sample selection (up to 16 kit variants), sample-accurate timing, a 200-slot pattern library and 512-bar song chains with WAV export. Built with C and SDL2 for 640x480 handhelds.",
     "desc_md": null,
     "inst": "Ready to run out of the box, no additional files needed.",
     "inst_md": null,
