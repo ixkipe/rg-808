@@ -502,6 +502,29 @@ static int dir_action(int button)
     }
 }
 
+/* Same physical dpad often arrives as BOTH a controller dpad-button and a
+ * raw joystick hat (SDL mirrors events for mapped controllers). If both are
+ * handled the cursor jumps twice — suppress raw events for mapped controllers. */
+static int joy_covered_by_controller(SDL_JoystickID which)
+{
+    return SDL_GameControllerFromInstanceID(which) != NULL;
+}
+
+static int saw_dpad_buttons = 0;   /* controller exposes dpad buttons -> ignore dpad-as-axis */
+
+/* If the controller mapping binds dpad buttons, axis-based dpad echoes
+ * (some sunxi mappings carry leftx/lefty AND dpup from one hat) must be
+ * ignored up front, not just after the first press. */
+static void gc_note_mapping(SDL_GameController *gc)
+{
+    if (!gc) return;
+    char *map = SDL_GameControllerMapping(gc);
+    if (map) {
+        if (strstr(map, "dpup:") || strstr(map, "dpleft:")) saw_dpad_buttons = 1;
+        SDL_free(map);
+    }
+}
+
 static void handle_key(App *a, SDL_Keycode k)
 {
     switch (k) {
@@ -541,6 +564,7 @@ static void handle_gc_button(App *a, int button, int down)
         case SDL_CONTROLLER_BUTTON_DPAD_UP: case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
         case SDL_CONTROLLER_BUTTON_DPAD_LEFT: case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: {
             int ad = dir_action(button);
+            saw_dpad_buttons = 1;
             act(a, ad);
             held_dir = ad; held_since = SDL_GetTicks(); last_auto = held_since;
             break;
@@ -592,6 +616,7 @@ static void handle_joy_button(App *a, int button, int down)
 static void handle_joy_hat(App *a, int hat, int dir)
 {
     if (hat != 0 || dir == SDL_HAT_CENTERED) return;
+    if (saw_dpad_buttons) return;
     if (dir & SDL_HAT_UP) act(a, ACT_UP);
     if (dir & SDL_HAT_DOWN) act(a, ACT_DOWN);
     if (dir & SDL_HAT_LEFT) act(a, ACT_LEFT);
@@ -602,6 +627,7 @@ static void handle_joy_axis(App *a, int axis, int val)
 {
     static int dir[2] = { 0, 0 };
     if (axis > 1) return;
+    if (saw_dpad_buttons) return;
     int nd = 0;
     if (val > 12000) nd = 1;
     else if (val < -12000) nd = -1;
@@ -740,7 +766,7 @@ int main(int argc, char **argv)
     int raw_opened = 0;
     a.last_save = SDL_GetTicks();
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
-        if (SDL_IsGameController(i)) SDL_GameControllerOpen(i);
+        if (SDL_IsGameController(i)) gc_note_mapping(SDL_GameControllerOpen(i));
         else if (!raw_opened && SDL_JoystickOpen(i)) raw_opened = 1;
     }
 
@@ -758,9 +784,19 @@ int main(int argc, char **argv)
             case SDL_CONTROLLERBUTTONDOWN: handle_gc_button(&a, ev.cbutton.button, 1); break;
             case SDL_CONTROLLERBUTTONUP:   handle_gc_button(&a, ev.cbutton.button, 0); break;
             case SDL_CONTROLLERAXISMOTION: handle_joy_axis(&a, ev.caxis.axis, ev.caxis.value); break;
-            case SDL_JOYHATMOTION: handle_joy_hat(&a, ev.jhat.hat, ev.jhat.value); break;
+            case SDL_CONTROLLERDEVICEADDED:
+                gc_note_mapping(SDL_GameControllerOpen(ev.cdevice.which));
+                break;
+            case SDL_JOYAXISMOTION:
+                if (!joy_covered_by_controller(ev.jaxis.which))
+                    handle_joy_axis(&a, ev.jaxis.axis, ev.jaxis.value);
+                break;
+            case SDL_JOYHATMOTION:
+                if (!joy_covered_by_controller(ev.jhat.which))
+                    handle_joy_hat(&a, ev.jhat.hat, ev.jhat.value);
+                break;
             case SDL_JOYBUTTONDOWN:
-                if (!SDL_IsGameController(ev.jbutton.which))
+                if (!joy_covered_by_controller(ev.jbutton.which))
                     handle_joy_button(&a, ev.jbutton.button, 1);
                 break;
             case SDL_JOYDEVICEADDED:

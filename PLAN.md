@@ -34,14 +34,19 @@ launch shims in `<roms>/PORTS/`, port logs in `ports/rg808/log.txt`.
   playhead row, beat markers, tempo header, status bar, MENU + TEMPO + KIT modes,
   on/off/accent visual hierarchy. Verified via `--screenshot` (see
   `port/rg808/screenshot.png`) and a stable live run.
-- [ ] **M3 — Device port & parity** *(artifacts ready, hardware test pending)*
+- [ ] **M3 — Device port & parity** *(first launch on SP: SUCCESS)*
   - [x] Dual-arch binaries in zip; `RG808.sh` launch script follows the PortMaster
     template (control.txt, get_controls, LD_LIBRARY_PATH `libs.${DEVICE_ARCH}`,
     gptokeyb kill-daemon, `pm_platform_helper`/`pm_finish`) **and** degrades
     gracefully to a manual install without PortMaster
   - [x] `tools/device/install.sh` + `tools/deploy.ps1` (SSH/SFTP path)
-  - [ ] Launch on SP from muOS Ports; report: display ok? sound crackle/latency?
-    button mapping (controllerdb / gptokeyb / raw-joystick fallback)?
+  - [x] First real-device launch (2026-11-06): app runs — video + sound + install
+    path confirmed working end-to-end
+  - [x] D-pad double-fire fixed (SDL emitted controller-button AND raw-hat events
+    for the same press; raw joystick events now suppressed for mapped controllers,
+    mapping is checked up front for dpad buttons) — needs on-device retest
+  - [ ] Retest controls after fix; report audio latency/cleanliness and whether
+    A/B/X/Y/START/SELECT/L/R all map correctly
   - [ ] Tune audio period size / `samples` on hardware if needed
 - [x] **M4 — Persistence & polish** — save/load `pattern.txt` round-trip verified;
   kit selections persisted as `KIT <track> <n>` lines (old kit-less files load with
@@ -124,6 +129,9 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
   (ARM aarch64 + ARM EABI5 armhf, dynamically linked against system SDL2).
 - Kit selection shipped: every variant family from the pack is selectable per
   voice via the new KIT mode (menu → SELECT KITS).
+- **First real-device session (2026-11-06): the port boots and runs on the SP.**
+  Only issue found: D-pad double-fire (fixed in `src/main.c`, rebuilt zip —
+  awaiting on-device retest).
 - Not yet done: anything that needs the physical device (probe output, first launch,
   latency/button mapping tuning, device screenshot).
 
@@ -141,11 +149,11 @@ song assembly → output DSP. M6 and M9 are independent; M8 requires M7.
 
 ## Next actions
 
-1. User: run `tools/device/probe.sh` on the SP (Mustard Terminal) and share the output.
-2. User: enable SSH (muOS Connectivity) or copy `dist/rg808.zip` to the SD card;
-   install via `tools/deploy.ps1 <ip>` or `tools/device/install.sh`.
-3. First-launch feedback: video correct? audio latency/cleanliness? buttons? Then tune.
-4. Swap in a device screenshot; final zip refresh (`tools/package-port.ps1`).
-5. v2 feature development: **not started** — scope and sequencing for the
-   `todo.md` items live in milestones M6–M10 above; confirm priority when we
-   pick the first one (proposal: M3 device validation → M6 → M7 → M8, M9 anytime).
+1. User: reinstall the refreshed `dist/rg808.zip` (or just copy the two binaries
+   to `<card>/ports/rg808/`) and retest the D-pad — expect single steps now.
+2. User (optional but useful): run `tools/device/probe.sh` once — confirms glibc,
+   SDL2 version and which arch binary actually ran; informs the upstream PR later.
+3. Report from device: audio latency/crackle? other buttons (A/B/X/Y, START,
+   SELECT, L/R) all correct? If clean → swap in a device screenshot, refresh the
+   zip, and M3/M5 can close.
+4. Then pick the v2 entry point (proposal: M3 validation → M6 → M7 → M8; M9 anytime).

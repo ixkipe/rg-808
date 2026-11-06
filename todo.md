@@ -1,6 +1,8 @@
 - ratchet notes (1/2, 1/3, 1/4, flam)
+- swing (a.k.a. shuffle)
 - effects
-  - compression/overdrive/distortion
+  - compression/overdrive/distortion (either/or)
+  - flanger/phaser (either/or)
   - delay
   - reverb
 - save up to 200 patterns
