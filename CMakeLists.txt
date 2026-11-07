@@ -8,7 +8,7 @@ add_executable(rg808
     src/main.c
     src/engine.c
     src/canvas.c
-    src/samples.c
+    src/samplebank.c
     src/wav.c
     src/pattern.c
     src/song.c
@@ -31,7 +31,7 @@ else()
     target_link_libraries(rg808 ${SDL2_LIBRARIES} m)
 endif()
 
-# ship the curated kit next to the executable for local dev
+# ship the local sample tree next to the executable for dev
 add_custom_command(TARGET rg808 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:rg808>/assets)

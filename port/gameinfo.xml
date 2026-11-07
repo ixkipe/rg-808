@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <gameList>
   <game>
-    <path>./RG808.sh</path>
-    <name>RG808</name>
-    <desc>A Roland TR-808 style drum machine for your handheld: 1-16-step sequencer with 11 classic voices, per-step accents, sample-accurate timing, swing/ratchets, a 200-slot pattern library, 512-bar song chains with WAV export, and per-pattern master effects (bitcrusher/overdrive/compression, flanger/phaser, tempo-synced delay, reverb).</desc>
-    <releasedate>20261106T000000</releasedate>
+    <path>./RGSMP.sh</path>
+    <name>RG-SMP</name>
+    <desc>An 11-track sample drum machine for your handheld: recursive WAV browser, per-track sample assignment, 1-16-step patterns with accents, swing and ratchets, a 200-slot pattern library, 512-bar song chains with WAV export, master effects, mute and punch-in FX.</desc>
+    <releasedate>20261107T000000</releasedate>
     <developer>vistor</developer>
     <publisher>Open Source</publisher>
     <genre>Music</genre>
-    <image>./rg808/screenshot.png</image>
+    <image>./rgsmp/screenshot.png</image>
   </game>
 </gameList>

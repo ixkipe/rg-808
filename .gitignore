@@ -1,4 +1,4 @@
-# RG-808 build
+# RG-SMP build
 build/
 build-*/
 
@@ -6,7 +6,8 @@ build-*/
 vendor/sdl2/
 vendor/*.zip
 
-# original sample pack stays untracked; curated kit under assets/ is tracked
+# user-provided sample packs; assets are local-only and shipped inside the port zip
+assets/
 Roland TR-808/
 
 # generated

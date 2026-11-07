@@ -1,5 +1,10 @@
 # RG-808 Development Plan
 
+> **Sampler branch note:** this file is the original RG-808 / clone-core plan.
+> The `sampler` branch ships RG-SMP; its sample model, browser and branding are
+> described in `SAMPLER.md` and `README.md`. `CORE_PLAN.md` and
+> `CLONES_PLAN.md` are not part of the sampler branch's current scope.
+
 **Current version: 0.1** (2026-11-07). M1–M11 are implemented on PC and in the
 dual-arch cross-build; physical-device validation and CPU tuning remain open.
 

@@ -1,19 +1,19 @@
 {
   "version": 4,
-  "name": "rg808.zip",
+  "name": "rgsmp.zip",
   "items": [
-    "RG808.sh",
-    "rg808"
+    "RGSMP.sh",
+    "rgsmp"
   ],
   "items_opt": [],
   "attr": {
-    "title": "RG808",
+    "title": "RG-SMP",
     "porter": [
       "vistor"
     ],
-    "desc": "A Roland TR-808 style drum machine: 1-16-step sequencer with 11 classic voices (BD, SD, toms, hats, clave, clap, cowbell, cymbal), per-step accents, swing, ratchet rolls/flams, per-voice sample selection (up to 16 kit variants), sample-accurate timing, a 200-slot pattern library, 512-bar song chains with WAV export, and per-pattern master effects (bitcrusher/overdrive/compression, flanger/phaser, tempo-synced delay, reverb). Built with C and SDL2 for 640x480 handhelds.",
+    "desc": "A compact 11-track sample drum machine for your handheld: browse WAV files recursively, assign one sample per track, and build 1-16-step patterns with accents, swing, ratchet rolls/flams, a 200-slot pattern library, 512-bar song chains with WAV export, a master effects chain, per-track mute and held R1 punch-in FX. Samples are loaded on demand; patterns reference their WAV paths directly. Built with C and SDL2 for 640x480 handhelds.",
     "desc_md": null,
-    "inst": "Ready to run out of the box, no additional files needed.",
+    "inst": "Ready to run. Put your own WAV sample folders under rgsmp/assets/wav (the port ships with a starter set).",
     "inst_md": null,
     "genres": [
       "music"

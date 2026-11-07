@@ -3,7 +3,6 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "pattern.h"
-#include "samples.h"
 #include "fx.h"
 
 #include <errno.h>
@@ -322,8 +321,6 @@ void pattern_default_snapshot(PatternSnapshot *s)
     s->swing_pct = 0;
     s->length = N_STEPS;
     fx_get_fallback(&s->fx);
-    for (int t = 0; t < N_TRACKS; t++)
-        s->kit[t] = TRACKS[t].dflt - 1;
     s->slot = 0;
 }
 
@@ -338,13 +335,17 @@ static void copy_snapshot_to_engine(Engine *e, const PatternSnapshot *s)
             e->lvl[t][st] = s->lvl[t][st];
             e->rch[t][st] = s->rch[t][st];
         }
-        e->kit[t] = s->kit[t];
+        snprintf(e->sample_path[t], sizeof e->sample_path[t], "%s",
+                 s->sample_path[t]);
+        e->sample_data[t] = NULL;
+        e->sample_len[t] = 0;
+        e->sample_missing[t] = 0;
     }
 }
 
 static int parse_pattern_stream(FILE *f, PatternSnapshot *s)
 {
-    char line[256];
+    char line[512];
     int got_any = 0;
     while (fgets(line, sizeof line, f)) {
         if (fx_parse_line(&s->fx, line)) {
@@ -366,15 +367,17 @@ static int parse_pattern_stream(FILE *f, PatternSnapshot *s)
             } else if (!strncmp(line, "LEN ", 4)) {
                 s->length = engine_length_clamp(atoi(line + 4));
                 got_any = 1;
-            } else if (!strncmp(line, "KIT ", 4)) {
-                int idx = 0;
-                if (sscanf(line + 4, "%4s %d", lab, &idx) == 2) {
+            } else if (!strncmp(line, "SMP ", 4)) {
+                int pos = 0;
+                if (sscanf(line, "SMP %7s %n", lab, &pos) == 1 && pos > 0) {
+                    char *p = line + pos;
+                    while (*p == ' ') p++;
+                    trim_eol(p);
                     for (int t = 0; t < N_TRACKS; t++) {
                         if (!strcmp(lab, TRACKS[t].label)) {
-                            int cnt = variant_count(t);
-                            if (cnt && idx < 1) idx = 1;
-                            if (cnt && idx > cnt) idx = cnt;
-                            if (cnt) s->kit[t] = idx - 1;
+                            snprintf(s->sample_path[t], sizeof s->sample_path[t],
+                                     "%s", p);
+                            got_any = 1;
                             break;
                         }
                     }
@@ -413,8 +416,11 @@ static int parse_pattern_stream(FILE *f, PatternSnapshot *s)
 
 static int write_pattern_stream(FILE *f, Engine *e)
 {
-    fprintf(f, "RG808P1\n");
+    fprintf(f, "RGSMP1\n");
     fprintf(f, "BPM %.2f\n", e->bpm_x100 / 100.0);
+    for (int t = 0; t < N_TRACKS; t++)
+        if (e->sample_path[t][0])
+            fprintf(f, "SMP %s %s\n", TRACKS[t].label, e->sample_path[t]);
     for (int t = 0; t < N_TRACKS; t++) {
         fprintf(f, "%s ", TRACKS[t].label);
         for (int s = 0; s < N_STEPS; s++) fprintf(f, "%d", e->lvl[t][s]);
@@ -425,8 +431,6 @@ static int write_pattern_stream(FILE *f, Engine *e)
         for (int s = 0; s < N_STEPS; s++) fprintf(f, "%d", e->rch[t][s]);
         fprintf(f, "\n");
     }
-    for (int t = 0; t < N_TRACKS; t++)
-        fprintf(f, "KIT %s %d\n", TRACKS[t].label, e->kit[t] + 1);
     fprintf(f, "SWING %d\n", e->swing_pct);
     fprintf(f, "LEN %d\n", engine_length_clamp(e->length));
     FxSettings fx;

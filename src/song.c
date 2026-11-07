@@ -1,5 +1,6 @@
-/* RG-808 song persistence and snapshot building. */
+/* RG-SMP song persistence and snapshot building. */
 #include "song.h"
+#include "samplebank.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,6 +70,47 @@ int song_build_set(const Song *s, PatternLib *lib, SongSet *set)
             missing++;
         }
     }
+    return missing;
+}
+
+/* Resolve every sample path in the set against one bank. Returns the number of
+ * missing/failed samples, or -2 when the set needs more slots than the bank. */
+int song_load_samples(SongSet *set, SampleBank *bank, const char *root)
+{
+    if (!set || !bank || !root) return -1;
+
+    int unique = 0;
+    for (int i = 0; i < set->count; i++) {
+        for (int t = 0; t < N_TRACKS; t++) {
+            const char *p = set->pat[i].sample_path[t];
+            if (!*p) continue;
+            int found = 0;
+            for (int j = 0; j <= i && !found; j++) {
+                int last = (j == i) ? t : N_TRACKS;
+                for (int k = 0; k < last; k++)
+                    if (!strcmp(p, set->pat[j].sample_path[k])) { found = 1; break; }
+            }
+            if (!found) unique++;
+        }
+    }
+    if (unique > bank->max_entries) return -2;
+
+    int missing = 0;
+    for (int i = 0; i < set->count; i++) {
+        for (int t = 0; t < N_TRACKS; t++) {
+            const char *p = set->pat[i].sample_path[t];
+            set->pat[i].sample[t] = NULL;
+            set->pat[i].sample_len[t] = 0;
+            if (!*p) continue;
+            int idx = samplebank_load(bank, root, p);
+            if (idx < 0) {
+                missing++;
+                continue;
+            }
+            set->pat[i].sample[t] = samplebank_data(bank, idx, &set->pat[i].sample_len[t]);
+        }
+    }
+    if (bank->overflow) return -2;
     return missing;
 }
 

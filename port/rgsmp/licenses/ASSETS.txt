@@ -1,19 +1,18 @@
-RG-808 sample kit
-=================
-74 WAVs shipped as <track>NN.wav variant families, copied from the
-"Roland TR-808" sample pack supplied with the project source:
+RG-SMP sample packs
+===================
+The port ships user-provided WAV samples under assets/wav/:
 
-  bd01..16   <- TR-808Kick01..16
-  sd01..16   <- TR-808Snare01..16
-  lt/mt/ht01..07 <- TR-808Tom01..07  (same family on each tom track)
-  ch01..05   <- TR-808Hat_C01..05
-  oh01..03   <- TR-808Hat_O01..03
-  cl01..02   <- TR-808Clave, Claves
-  cp01..03   <- TR-808Clap01..02, Clap
-  cb01..02   <- TR-808Cow, Cowbell
-  cy01..06   <- TR-808Ride01..04, Crash-01, Crash-02
+  808/    TR-808 style one-shots
+  707/    TR-707 style one-shots
+  909/    TR-909 style one-shots
+  DMX/    Oberheim DMX style one-shots
+  E-MU/   E-mu Drumulator style one-shots
+  LM1/    LinnDrum LM-1 style one-shots
 
-Default pick per voice: see src/engine.c (dflt) and tools/prepare-assets.ps1.
-Remix/redistribution terms of the original pack: unknown — the pack was
-provided to this project by its owner. If this port is published publicly,
-confirm the pack's licence first.
+The sample browser can also use any additional subdirectory placed under
+assets/wav/ at runtime. Samples are loaded on demand, not converted into
+track-specific family names.
+
+Redistribution terms of these packs are not established in this repository.
+The packs were supplied to the project by its owner. If this port is published
+publicly, confirm the licence of every included sample first.

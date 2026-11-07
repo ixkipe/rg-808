@@ -1,5 +1,5 @@
 #!/bin/bash
-# RG-808 — PortMaster launch script
+# RG-SMP - PortMaster launch script
 # Based on the standard PortMaster launchscript template (portmaster.games/packaging.html),
 # hardened so it also works on a plain muOS Ports folder without PortMaster installed.
 
@@ -35,11 +35,11 @@ fi
 get_controls
 
 GAMEDIR=""
-for cand in "/$directory/ports/rg808" "/roms/ports/rg808" "/storage/rom/ports/rg808" "/ports/rg808"; do
+for cand in "/$directory/ports/rgsmp" "/roms/ports/rgsmp" "/storage/rom/ports/rgsmp" "/ports/rgsmp"; do
   [ -d "$cand" ] && GAMEDIR="$cand" && break
 done
 if [ -z "$GAMEDIR" ]; then
-  echo "RG808: could not find its port folder (expected in <card>/ports/rg808)"
+  echo "RGSMP: could not find its port folder (expected in <card>/ports/rgsmp)"
   sleep 5
   exit 1
 fi
@@ -57,10 +57,10 @@ export SDL_GAMECONTROLLERCONFIG="$sdl_controllerconfig"
 # the app reads samples from <exe dir>/assets/wav by default; fullscreen on 640x480
 export RG808_FULLSCREEN=1
 
-BIN="$GAMEDIR/rg808.${DEVICE_ARCH}"
+BIN="$GAMEDIR/rgsmp.${DEVICE_ARCH}"
 [ -x "$BIN" ] || chmod +x "$BIN" 2>/dev/null
 
-[ -n "$GPTOKEYB" ] && $GPTOKEYB "rg808.${DEVICE_ARCH}" &
+[ -n "$GPTOKEYB" ] && $GPTOKEYB "rgsmp.${DEVICE_ARCH}" &
 pm_platform_helper "$BIN"
 "$BIN"
 

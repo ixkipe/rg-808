@@ -1,8 +1,8 @@
 #!/bin/sh
-# RG-808 device probe — run in Mustard Terminal (muOS) or over SSH.
+# RG-SMP device probe - run in Mustard Terminal (muOS) or over SSH.
 # Prints the facts the cross-build needs. Pipe to a file and send back:
 #   sh probe.sh > /storage/rom/probe.txt 2>&1
-echo "=== RG-808 device probe ==="
+echo "=== RG-SMP device probe ==="
 echo "date: $(date)"
 echo
 echo "--- kernel/arch ---"

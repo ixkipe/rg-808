@@ -1,4 +1,4 @@
-# Cross-toolchain build environment for the RG-808 PortMaster port.
+# Cross-toolchain build environment for the RG-SMP PortMaster port.
 # Builds armhf + aarch64 binaries linked against the system SDL2 on the device.
 FROM debian:bookworm
 
