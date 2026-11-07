@@ -70,7 +70,7 @@ launch shims in `<roms>/PORTS/`, port logs in `ports/rg808/log.txt`.
 
 Ordered so each layer builds on a stable base: step model → pattern storage →
 song assembly → output DSP. M6 and M9 are independent; M8 requires M7; M9.5
-extends M9; M11 is independent of the core split; M12 precedes M13.
+extends M9; M11 is the performance FX layer.
 
 - [ ] **M6 — Timing & feel** *(todo: swing; ratchet notes) — done on PC, device check pending*
   - [x] **Swing/shuffle**: one global amount (0–100 % of a 16th), delays every even
@@ -207,7 +207,7 @@ extends M9; M11 is independent of the core split; M12 precedes M13.
     audition alias) plus a `--mode mute` screenshot; M6–M9/length/shortcut
     suites still pass.
 - [x] **M11 — Performance punch-in FX** *(todo: MPC/Gross Beat-style held
-  effects on R1; independent of the core/machine split)*
+  effects on R1)*
   - [x] **M11.0 — Free R1 first.** Ratchet moved from `R1 + Right` to
     `L1 + Down`; kit moved from `R1 + Left` to `L2 + Up`. Shortcut map, hint
     overlays, tests, README and port README updated. R1 is now reserved for
@@ -270,21 +270,12 @@ extends M9; M11 is independent of the core split; M12 precedes M13.
   - [ ] **Risks / device check:** ~11.3 MiB extra heap per engine (ring +
     slice), click-free crossfades, and CPU headroom on the H700 with master FX
     plus punch-in active. Device spot-check still pending.
-- [ ] **M12 — Core split** — see `CORE_PLAN.md`. Extract the sample-agnostic
-  sequencer/pattern/song/FX/shortcut/UI core into the `core` branch, with
-  machine data supplied per branch. No runtime machine switching.
-- [ ] **M13 — Machine ports** — see `CLONES_PLAN.md`. Add RD-909, RD-707 and
-  RD-RETRO as separate machine branches built on `core`, using fixed one-shot
-  samples with accent-as-gain.
 
 ## Current state (as of 2026-11-07)
 
 - **Version 0.1:** M1–M11 implemented; PC and both ARM cross-builds pass the
   automated suites. Device-only checks (controls, audio latency, effects CPU,
   punch-in CPU, device screenshot) remain.
-- **Next up (planned, not implemented):** M12 sample-agnostic core split
-  (`CORE_PLAN.md`), M13 RD-909/RD-707/RD-RETRO machine ports
-  (`CLONES_PLAN.md`).
 - Repo: `master`, all work committed (M1/M2 → tooling/packaging → autosave & fixes).
 - Working on PC: full app runs natively (`build/rg808.exe`) with audio + keyboard/gamepad;
   engine and UI validated by automated paths (bounce frame-count math, save/load round
@@ -362,8 +353,7 @@ extends M9; M11 is independent of the core split; M12 precedes M13.
 3. Report from device: audio latency/crackle? other buttons (A/B/X/Y, START,
    SELECT, L/R) all correct? If clean → swap in a device screenshot, refresh the
    zip, and M3/M5 can close.
-4. Then pick the v2 entry point (proposal: M3 validation → M6 → M7 → M8; M9 anytime).
-   M6/M7/M8/M8.5/M9/M9.5/M10/M11 are done on PC; the device still needs the
+4. M6/M7/M8/M8.5/M9/M9.5/M10/M11 are done on PC; the device still needs the
    M6–M11 control/DSP pass (pattern browser, song page and export, pattern
    length, per-pattern effects CPU, Y mute, R1 punch-in).
 5. Device: check the shoulder shortcut layer - L1/L2/R2 hint overlay and the
@@ -376,7 +366,3 @@ extends M9; M11 is independent of the core split; M12 precedes M13.
    cleanly.
 7. Device: check the R1 punch-in layer (all eight effects, quantized starts,
    release crossfades, song playback) and spot-check CPU with master FX on.
-8. Start **M12** per `CORE_PLAN.md`: create the `core` branch, de-808 the data
-   model, and prove 808 parity before adding machines.
-9. Then execute **M13** per `CLONES_PLAN.md`: RD-909 first, then RD-707, then
-   RD-RETRO, one machine branch at a time with a device smoke test between.
