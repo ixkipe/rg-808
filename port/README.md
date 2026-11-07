@@ -3,9 +3,9 @@
 A Roland TR-808 clone for PortMaster handhelds: a 1-16-step, 11-track drum
 machine with per-step accents, sample-accurate sequencing, one-tap sample
 selection per voice (kit mode), a 200-slot pattern library, song chains with
-WAV export, and a per-pattern master effects chain (selectable drive and
-modulation, tempo-synced delay, reverb), written in C with SDL2. Runs natively
-at 640x480.
+WAV export, a per-pattern master effects chain (selectable drive and
+modulation, tempo-synced delay, reverb), per-track mute and held R1 punch-in
+FX, written in C with SDL2. Runs natively at 640x480.
 
 > **Disclaimer: this project was made with AI.** All of the source code, build
 > and packaging tooling, documentation and planning in this repository were
@@ -30,16 +30,23 @@ packaging conventions.
 | Y | Mute / unmute selected voice (sequencer) |
 | START | Play / stop |
 | SELECT | Menu (tempo, swing, pattern length, ratchets, kits, effects, save, pattern library, clear, quit) |
-| L1 / L2 / R1 / R2 | Shoulder shortcuts (hold; on-screen D-pad shows each direction) |
+| L1 / L2 / R2 | Shoulder shortcuts (hold; on-screen hint shows each direction) |
+| R1 + D-Pad / A B X Y | Held punch-in FX (one at a time, quantized to the next 16th) |
 
 Shoulder shortcuts (hold + D-pad):
 L1+Left = tempo, L1+Right = swing, L1+Up = pattern length,
-L2+Left = pattern library, L2+Right = song mode,
-R1+Left = sample/kit selection, R1+Right = ratchet notes,
-R2+Up = drive FX, R2+Left = modulation FX,
-R2+Down = delay FX, R2+Right = reverb FX. Other combinations are reserved
-for future features. Pressing a shoulder shows the D-pad hint overlay;
+L1+Down = ratchet notes, L2+Left = pattern library, L2+Right = song mode,
+L2+Up = sample/kit selection, R2+Up = drive FX, R2+Left = modulation FX,
+R2+Down = delay FX, R2+Right = reverb FX. Other L2 combinations are reserved
+for future features. Pressing a shoulder shows the hint overlay;
 releasing it hides the overlay immediately.
+
+R1 punch-in FX: hold R1 and press Left/Right/Up/Down for 1/4, 1/8, 1/16 or
+1/32 stutter loops; A = 1/4 rewind, B = 1/16 gate, X = tape stop (one 1/8
+note to silence), Y = phone filter. The overlay mirrors the SP controls: D-pad on the left, face buttons
+on the right (X top, A right, B bottom, Y left). The effect starts on the next
+16th, only one is active at a time, and release crossfades back to live audio.
+It works in pattern and song playback and is not included in WAV export.
 
 Mute: Y toggles a performance mute for the selected instrument in the
 sequencer; X still auditions it. Muted rows are tinted and marked with a red

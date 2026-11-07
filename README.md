@@ -12,7 +12,8 @@ A 1–16-step, 11-track drum machine written in C with SDL2, packaged as a
 PortMaster "ready-to-run" port. Per-step accents, sample-accurate sequencing,
 a 200-slot pattern library, song chains with WAV export, a per-pattern master
 effects chain (selectable drive, selectable modulation, tempo-synced delay,
-reverb), 640×480 native UI, D-pad driven.
+reverb), per-track performance mute, held R1 punch-in FX, 640×480 native UI,
+D-pad driven.
 
 > **Disclaimer: this project was made with AI.** All of the source code, build
 > and packaging tooling, documentation and planning in this repository were
@@ -50,12 +51,15 @@ rg808.exe --song                        # export to conf/song.wav
 rg808.exe --test-song                   # headless song checks
 rg808.exe --test-length                 # headless pattern-length checks
 rg808.exe --test-fx                     # headless effects checks
+rg808.exe --test-mute                   # headless performance-mute checks
+rg808.exe --test-punch                  # headless punch-in FX checks
 rg808.exe --screenshot shot.bmp         # render one UI frame to BMP
 rg808.exe --screenshot p.bmp --mode pattern   # pattern browser frame
 ```
 Keyboard controls on PC: arrows=dpad, Z/Enter=A, X=B, C=X(hear), Y=mute,
 Space=START, Esc/Backspace=SELECT-menu, 1/2/3/4=L1/L2/R1/R2 (hold + arrows for
-shortcuts), [/]=tempo, Q=quit.
+shortcuts; hold 3=R1 and press a direction or Z/X/C/Y for punch-in FX),
+[/]=tempo, Q=quit.
 
 ## Building for the device (muOS / PortMaster)
 Requires Docker Desktop (or any docker):
@@ -92,7 +96,8 @@ tools\device\probe.sh > probe.txt 2>&1     # in Mustard Terminal
 | Y | Mute / unmute the selected track in the sequencer |
 | START | Play / stop |
 | SELECT | Menu (tempo, swing, pattern length, ratchets, kits, effects, save, pattern library, song mode, clear all, quit) |
-| L1 / L2 / R1 / R2 | Shoulder shortcuts — hold one and a D-pad hint appears |
+| L1 / L2 / R2 | Shoulder shortcuts — hold one and an on-screen hint appears |
+| R1 + D-Pad / A B X Y | Held punch-in effects (one at a time, quantized to the next 16th) |
 
 **Shoulder shortcuts**: hold a shoulder button and the UI shows a D-pad-shaped
 cheat sheet for that button. The assigned combinations are:
@@ -102,23 +107,35 @@ cheat sheet for that button. The assigned combinations are:
 | L1 + Left | Tempo |
 | L1 + Right | Swing |
 | L1 + Up | Pattern length |
+| L1 + Down | Ratchet notes |
 | L2 + Left | Pattern library |
 | L2 + Right | Song mode |
-| R1 + Left | Sample/kit selection |
-| R1 + Right | Ratchet notes |
+| L2 + Up | Sample/kit selection |
+| R1 + Left/Right/Up/Down | 1/4, 1/8, 1/16, 1/32 stutter loop |
+| R1 + A / B / X / Y | Rewind, 1/16 gate, tape stop, phone filter |
 | R2 + Up | Drive FX |
 | R2 + Left | Modulation FX |
 | R2 + Down | Delay FX |
 | R2 + Right | Reverb FX |
 
-Other combinations are reserved for future features. Pressing a shoulder shows
-the hint; releasing it hides the hint immediately.
+Other L2 combinations are reserved for future features. Pressing a shoulder
+shows the hint; releasing it hides the hint immediately.
 
 **Mute**: in the sequencer, Y toggles a performance mute for the selected
 instrument; X still auditions it. Muted rows are tinted and marked with a red
 `M`. Mutes apply to live playback and song playback, cut any ringing hit
 immediately, and are not saved with the pattern (they reset on restart).
 Auditioning a muted track still works, so it stays programmable.
+
+**Punch-in FX**: hold R1 and press a direction or face button for a momentary
+master effect. Left/Right/Up/Down are 1/4, 1/8, 1/16 and 1/32 stutter loops;
+A is a 1/4 rewind, B a 1/16 gate, X a tape stop (one 1/8 note to silence) and
+Y a phone-style band-pass.
+The overlay mirrors the SP controls: D-pad on the left, face buttons on the
+right (X top, A right, B bottom, Y left). The effect starts on the next 16th
+boundary, only one effect can be active at a time, and releasing the button
+crossfades back to live audio. Punch-ins work during pattern and song playback
+and are not saved or included in WAV export.
 
 **Swing**: menu → EDIT SWING; 0–100 % shuffles every even 16th late
 (~67 % ≈ triplet feel). **Pattern length**: menu → PATTERN LENGTH (or L1 + Up)
@@ -179,7 +196,7 @@ Each voice ships its whole variant family from the pack as `<id>NN.wav`
 the `dflt` column in `src/engine.c`.
 
 ## Status / roadmap
-- **Version 0.1** (2026-11-07): first complete development release. M1–M10
+- **Version 0.1** (2026-11-07): first complete development release. M1–M11
   are implemented on PC and both ARM cross-builds; physical-device validation
   and CPU tuning are still pending.
 - v1: single pattern, 11 tracks, accents, sample selection per voice
@@ -188,8 +205,8 @@ the `dflt` column in `src/engine.c`.
   rename/copy/delete and legacy import (M7), shoulder shortcut layer, song
   chains with streaming WAV export (M8), per-pattern length 1–16, and master
   effects (M9: selectable bitcrusher/overdrive/compression, flanger/phaser,
-  tempo-synced delay, reverb) with per-pattern settings (M9.5), and per-track
-  performance mute (Y in the sequencer).
+  tempo-synced delay, reverb) with per-pattern settings (M9.5), per-track
+  performance mute (Y in the sequencer), and R1 punch-in FX (M11).
 
 ## Credits & licences
 Code: this project (MIT where not otherwise noted). SDL2 (zlib), public-domain

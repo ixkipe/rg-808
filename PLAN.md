@@ -1,6 +1,6 @@
 # RG-808 Development Plan
 
-**Current version: 0.1** (2026-11-07). M1–M10 are implemented on PC and in the
+**Current version: 0.1** (2026-11-07). M1–M11 are implemented on PC and in the
 dual-arch cross-build; physical-device validation and CPU tuning remain open.
 
 Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster).
@@ -70,7 +70,7 @@ launch shims in `<roms>/PORTS/`, port logs in `ports/rg808/log.txt`.
 
 Ordered so each layer builds on a stable base: step model → pattern storage →
 song assembly → output DSP. M6 and M9 are independent; M8 requires M7; M9.5
-extends M9.
+extends M9; M11 is independent of the core split; M12 precedes M13.
 
 - [ ] **M6 — Timing & feel** *(todo: swing; ratchet notes) — done on PC, device check pending*
   - [x] **Swing/shuffle**: one global amount (0–100 % of a 16th), delays every even
@@ -206,12 +206,85 @@ extends M9.
     song playback, cuts ringing voices, preview still sounds, UI toggle and KIT
     audition alias) plus a `--mode mute` screenshot; M6–M9/length/shortcut
     suites still pass.
+- [x] **M11 — Performance punch-in FX** *(todo: MPC/Gross Beat-style held
+  effects on R1; independent of the core/machine split)*
+  - [x] **M11.0 — Free R1 first.** Ratchet moved from `R1 + Right` to
+    `L1 + Down`; kit moved from `R1 + Left` to `L2 + Up`. Shortcut map, hint
+    overlays, tests, README and port README updated. R1 is now reserved for
+    the punch-in layer.
+  - [x] **Engine/audio:** `PerfFxState` (heap-allocated, like `FxState`) runs
+    **after the master FX chain and before master gain/soft-clip**, so
+    stutters and rewinds capture the full mix including delay/reverb tails.
+    The stage is bypassed by `--bounce` and song WAV export because those
+    engines never request an effect; idle processing is bit-transparent.
+  - [x] **Capture buffer:** continuously written stereo float ring buffer,
+    **16 s** at the engine rate (5.4 MiB at 44.1 kHz) plus a 16 s frozen-slice
+    buffer. Slices are copied at trigger time; live audio keeps being
+    captured while the effect is active.
+  - [x] **Effects:**
+    - 1/4, 1/8, 1/16 and 1/32 **stutter loops** from the captured mix;
+      division length comes from the tempo at trigger (live or current song
+      bar).
+    - **1/4 rewind loop**: the 1/4 slice played backwards with linear
+      interpolation.
+    - **1/16 gate**: smoothed square volume gate at 1/16.
+    - **Tape stop**: the live ring is read at a rate ramping 1.0 → 0 over
+      **one 1/8 note at the trigger tempo** (250 ms at 120 BPM), with
+      interpolation, a 6 kHz low-pass and a level fade to silence.
+    - **Phone-like sound**: RBJ resonant band-pass at 1.2 kHz, Q = 2.5.
+  - [x] **Trigger semantics:**
+    - Hold `R1` and press a mapped direction/button. The effect engages on the
+      **next 16th-step boundary** in live or song playback; while stopped it
+      engages immediately for auditioning.
+    - Exactly **one effect at a time**; further triggers are ignored until the
+      active one is released.
+    - Release crossfades back to live audio over 8 ms; start uses a 5 ms
+      fade-in.
+  - [x] **Mapping:**
+    | Hold R1 + | Effect |
+    |--|--|
+    | Left | 1/4 loop |
+    | Right | 1/8 loop |
+    | Up | 1/16 loop |
+    | Down | 1/32 loop |
+    | A | 1/4 rewind loop |
+    | B | 1/16 gate |
+    | X | tape stop |
+    | Y | phone filter |
+  - [x] **Input/UI:** while R1 is held, A/B/X/Y and the D-pad are intercepted
+    before the normal actions, so `R1+Y` does not mute, `R1+X` does not
+    audition and no shortcut/menu opens. The overlay is laid out like the
+    device: a D-pad on the left and the SP face-button diamond on the right
+    (X top, A right, B bottom, Y left), highlighting the held/pending effect.
+    Controller, raw joystick and keyboard paths all release the effect on
+    key-up.
+  - [x] **Interactions:** mutes still gate new live hits; a stutter that
+    captured a now-muted instrument keeps looping that slice until release.
+    Punch-ins are not persisted and do not affect exports.
+  - [x] **Verification:** `--test-punch` / `tools/test-punch.ps1` cover the
+    idle bypass, quantized start, one-at-a-time lockout, pending cancel,
+    1/4 loop period, rewind direction, gate open/close, tape-stop fade,
+    phone DC rejection, release crossfade and song-mode start, plus the input
+    layer (R1+A, R1+Y does not mute, R1+Left). `--test-shortcuts` covers the
+    new L1+Down/L2+Up map. R1 overlay screenshot rendered.
+  - [ ] **Risks / device check:** ~11.3 MiB extra heap per engine (ring +
+    slice), click-free crossfades, and CPU headroom on the H700 with master FX
+    plus punch-in active. Device spot-check still pending.
+- [ ] **M12 — Core split** — see `CORE_PLAN.md`. Extract the sample-agnostic
+  sequencer/pattern/song/FX/shortcut/UI core into the `core` branch, with
+  machine data supplied per branch. No runtime machine switching.
+- [ ] **M13 — Machine ports** — see `CLONES_PLAN.md`. Add RD-909, RD-707 and
+  RD-RETRO as separate machine branches built on `core`, using fixed one-shot
+  samples with accent-as-gain.
 
 ## Current state (as of 2026-11-07)
 
-- **Version 0.1:** M1–M10 implemented; PC and both ARM cross-builds pass the
+- **Version 0.1:** M1–M11 implemented; PC and both ARM cross-builds pass the
   automated suites. Device-only checks (controls, audio latency, effects CPU,
-  device screenshot) remain.
+  punch-in CPU, device screenshot) remain.
+- **Next up (planned, not implemented):** M12 sample-agnostic core split
+  (`CORE_PLAN.md`), M13 RD-909/RD-707/RD-RETRO machine ports
+  (`CLONES_PLAN.md`).
 - Repo: `master`, all work committed (M1/M2 → tooling/packaging → autosave & fixes).
 - Working on PC: full app runs natively (`build/rg808.exe`) with audio + keyboard/gamepad;
   engine and UI validated by automated paths (bounce frame-count math, save/load round
@@ -256,6 +329,11 @@ extends M9.
   (X still auditions), with an `M` marker and immediate voice cut; mutes apply
   to live and song playback, are not persisted, and do not affect export.
   Verified by `tools/test-mute.ps1` / `--test-mute`.
+- M11 shipped (PC): R1 punch-in FX layer with 1/4–1/32 stutters, rewind, gate,
+  tape stop and phone filter; quantized to the next 16th, one at a time,
+  crossfaded release, live and song playback. Ratchet/kit shortcuts moved to
+  L1+Down / L2+Up. Verified by `tools/test-punch.ps1` / `--test-punch` and the
+  updated shortcut suite; device CPU spot-check pending.
 - **First real-device session (2026-11-06): the port boots and runs on the SP.**
   Only issue found: D-pad double-fire (fixed in `src/main.c`, rebuilt zip —
   awaiting on-device retest).
@@ -285,14 +363,20 @@ extends M9.
    SELECT, L/R) all correct? If clean → swap in a device screenshot, refresh the
    zip, and M3/M5 can close.
 4. Then pick the v2 entry point (proposal: M3 validation → M6 → M7 → M8; M9 anytime).
-   M6/M7/M8/M8.5/M9/M9.5/M10 are done on PC; the device still needs the
-   M6–M10 control/DSP pass (pattern browser, song page and export, pattern
-   length, per-pattern effects CPU, Y mute).
-5. Device: check the shoulder shortcut layer - L1/L2/R1/R2 hint overlay and the
-   L1+Left/Right/Up, L2+Left/Right, R1+Left/Right and R2+Up/Left/Down/Right
-   mappings. L2/R2 are read from SDL's trigger axes (and raw joystick axes
-   4/5). If the SP maps them differently, pin it from the device's
-   gamecontrollerdb.
+   M6/M7/M8/M8.5/M9/M9.5/M10/M11 are done on PC; the device still needs the
+   M6–M11 control/DSP pass (pattern browser, song page and export, pattern
+   length, per-pattern effects CPU, Y mute, R1 punch-in).
+5. Device: check the shoulder shortcut layer - L1/L2/R2 hint overlay and the
+   L1+Left/Right/Up/Down, L2+Left/Right/Up, R1 punch-in and
+   R2+Up/Left/Down/Right mappings. L2/R2 are read from SDL's trigger axes (and
+   raw joystick axes 4/5). If the SP maps them differently, pin it from the
+   device's gamecontrollerdb.
 6. Device: play a short song chain and run EXPORT WAV; confirm gapless bar
    switches, per-bar tempo changes, effects and that `conf/song.wav` plays back
    cleanly.
+7. Device: check the R1 punch-in layer (all eight effects, quantized starts,
+   release crossfades, song playback) and spot-check CPU with master FX on.
+8. Start **M12** per `CORE_PLAN.md`: create the `core` branch, de-808 the data
+   model, and prove 808 parity before adding machines.
+9. Then execute **M13** per `CLONES_PLAN.md`: RD-909 first, then RD-707, then
+   RD-RETRO, one machine branch at a time with a device smoke test between.

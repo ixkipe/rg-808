@@ -17,6 +17,7 @@
 #include "pattern.h"
 #include "song.h"
 #include "fx.h"
+#include "perf_fx.h"
 
 #define SCR_W 640
 #define SCR_H 480
@@ -90,6 +91,7 @@ typedef struct {
     int sh_held[SH_COUNT];            /* shoulder buttons currently down */
     int sh_last;                      /* most recent shoulder (overlay owner) */
     int sh_suppress;                  /* shortcut used: hide hint until release */
+    int punch_held;                   /* punch effect currently held, -1 = none */
     Uint32 shortcut_until;            /* hint overlay deadline */
     char msg[48];
     Uint32 msg_until;
@@ -295,14 +297,12 @@ static const char *shortcut_label(int sh, int ad)
         if (ad == ACT_LEFT) return "TEMPO";
         if (ad == ACT_RIGHT) return "SWING";
         if (ad == ACT_UP) return "PATTERN LENGTH";
+        if (ad == ACT_DOWN) return "RATCHET";
         break;
     case SH_L2:
         if (ad == ACT_LEFT) return "PATTERN LIBRARY";
         if (ad == ACT_RIGHT) return "SONG MODE";
-        break;
-    case SH_R1:
-        if (ad == ACT_LEFT) return "SAMPLE KIT";
-        if (ad == ACT_RIGHT) return "RATCHET";
+        if (ad == ACT_UP) return "SAMPLE KIT";
         break;
     case SH_R2:
         if (ad == ACT_UP) return "DRIVE FX";
@@ -324,6 +324,69 @@ static void draw_pad_cell(Canvas *c, int x, int y, int size, const char *sym, in
             active ? C_TEXT : C_TEXT_DIM);
 }
 
+/* One cell in the punch-in cluster: key symbol on top, effect name below. */
+static void draw_punch_cell(Canvas *c, int x, int y, int size,
+                            const char *key, const char *l1, const char *l2,
+                            int on, int playing)
+{
+    Uint32 text = playing ? C_LED : (on ? C_CURSOR : C_TEXT);
+    cv_rect(c, x, y, size, size, on ? cv_dim(C_LED, 0.25f) : 0x1c1c24);
+    cv_border(c, x, y, size, size, 2, on ? C_LED : C_TEXT_DIM);
+    cv_text(c, x + (size - cv_text_w(key, 1)) / 2, y + 5, key, 1,
+            on ? C_TEXT : C_TEXT_DIM);
+    if (l1)
+        cv_text(c, x + (size - cv_text_w(l1, 1)) / 2, y + 21, l1, 1, text);
+    if (l2)
+        cv_text(c, x + (size - cv_text_w(l2, 1)) / 2, y + 33, l2, 1, text);
+}
+
+/* R1 punch-in layer: D-pad on the left, face-button diamond on the right.
+ * SP face layout: X top, A right, B bottom, Y left. */
+static void draw_punch_overlay(App *a)
+{
+    Canvas *c = &a->cv;
+    int px = 20, py = 96, pw = 600, ph = 282;
+    cv_rect(c, px, py, pw, ph, C_PANEL);
+    cv_border(c, px, py, pw, ph, 2, C_TEXT);
+
+    cv_text(c, px + 16, py + 10, "R1 + PUNCH-IN FX", 1, C_TEXT);
+    cv_text(c, px + 16, py + 26,
+            "HOLD R1 AND PRESS A KEY - QUANTIZED TO 1/16", 1, C_TEXT_DIM);
+
+    const int size = 52, gap = 8;
+    const int cy = 228;
+    const int lx = 144, ly = cy - size / 2;
+    const int rx = 424;
+    int active = engine_punch_active(&a->eng);
+
+    draw_punch_cell(c, lx, ly - size - gap, size, "^", "1/16", NULL,
+                    a->punch_held == PUNCH_LOOP_16, active == PUNCH_LOOP_16);
+    draw_punch_cell(c, lx - size - gap, ly, size, "<", "1/4", NULL,
+                    a->punch_held == PUNCH_LOOP_4, active == PUNCH_LOOP_4);
+    draw_punch_cell(c, lx + size + gap, ly, size, ">", "1/8", NULL,
+                    a->punch_held == PUNCH_LOOP_8, active == PUNCH_LOOP_8);
+    draw_punch_cell(c, lx, ly + size + gap, size, "v", "1/32", NULL,
+                    a->punch_held == PUNCH_LOOP_32, active == PUNCH_LOOP_32);
+
+    draw_punch_cell(c, rx, ly - size - gap, size, "X", "TAPE", "STOP",
+                    a->punch_held == PUNCH_TAPESTOP, active == PUNCH_TAPESTOP);
+    draw_punch_cell(c, rx - size - gap, ly, size, "Y", "PHONE", NULL,
+                    a->punch_held == PUNCH_PHONE, active == PUNCH_PHONE);
+    draw_punch_cell(c, rx + size + gap, ly, size, "A", "REWIND", NULL,
+                    a->punch_held == PUNCH_REWIND, active == PUNCH_REWIND);
+    draw_punch_cell(c, rx, ly + size + gap, size, "B", "GATE", NULL,
+                    a->punch_held == PUNCH_GATE, active == PUNCH_GATE);
+
+    const char *left = "D-PAD: STUTTER LOOPS";
+    const char *right = "FACE BUTTONS: FX";
+    cv_text(c, lx + size / 2 - cv_text_w(left, 1) / 2, py + ph - 52,
+            left, 1, C_TEXT_DIM);
+    cv_text(c, rx + size / 2 - cv_text_w(right, 1) / 2, py + ph - 52,
+            right, 1, C_TEXT_DIM);
+    cv_text(c, px + 16, py + ph - 18,
+            "ONE EFFECT AT A TIME - RELEASE TO RETURN TO LIVE", 1, C_TEXT_DIM);
+}
+
 /* Transient D-pad-shaped hint shown while a shoulder button is down (and for
  * a moment after release). */
 static void draw_shortcut_overlay(App *a)
@@ -333,6 +396,7 @@ static void draw_shortcut_overlay(App *a)
     if (a->pat_pick_target > 0 || a->mode == MODE_EXPORT) return;
     int sh = a->sh_last;
     if (sh < 0 || sh >= SH_COUNT) return;
+    if (sh == SH_R1) { draw_punch_overlay(a); return; }
 
     Canvas *c = &a->cv;
     int px = 20, py = 110, pw = 600, ph = 250;
@@ -386,7 +450,7 @@ static void draw_shortcut_overlay(App *a)
     }
 
     cv_text(c, px + 16, py + ph - 18,
-            "OTHER COMBINATIONS ARE RESERVED FOR FUTURE FEATURES", 1, C_TEXT_DIM);
+            "RELEASE THE SHOULDER TO CLOSE", 1, C_TEXT_DIM);
 }
 
 static void draw_pattern_list(App *a, int with_actions)
@@ -2206,6 +2270,85 @@ static int dir_action(int button)
     }
 }
 
+/* ---------------------------------------------------------- punch-in FX */
+/* R1 is a held performance layer: R1 + direction / face button selects one of
+ * eight effects. The engine quantizes the start to the next 16th, and the UI
+ * tracks which effect is held so release always returns to live audio. */
+static int punch_enabled(const App *a)
+{
+    return a->sh_held[SH_R1] &&
+           a->mode != MODE_RENAME && a->mode != MODE_EXPORT &&
+           a->pat_pick_target == 0;
+}
+
+static int punch_for_dir(int ad)
+{
+    switch (ad) {
+    case ACT_LEFT:  return PUNCH_LOOP_4;
+    case ACT_RIGHT: return PUNCH_LOOP_8;
+    case ACT_UP:    return PUNCH_LOOP_16;
+    case ACT_DOWN:  return PUNCH_LOOP_32;
+    default:        return -1;
+    }
+}
+
+static int punch_for_gc_button(int button)
+{
+    switch (button) {
+    case SDL_CONTROLLER_BUTTON_A: return PUNCH_REWIND;
+    case SDL_CONTROLLER_BUTTON_B: return PUNCH_GATE;
+    case SDL_CONTROLLER_BUTTON_X: return PUNCH_TAPESTOP;
+    case SDL_CONTROLLER_BUTTON_Y: return PUNCH_PHONE;
+    default:                      return -1;
+    }
+}
+
+static int punch_for_raw_button(int button)
+{
+    switch (button) {
+    case 0: return PUNCH_REWIND;     /* A */
+    case 1: return PUNCH_GATE;       /* B */
+    case 2: return PUNCH_TAPESTOP;   /* X */
+    case 3: return PUNCH_PHONE;      /* Y */
+    default: return -1;
+    }
+}
+
+static int punch_for_key(SDL_Keycode k)
+{
+    switch (k) {
+    case SDLK_z: case SDLK_RETURN: return PUNCH_REWIND;
+    case SDLK_x:                   return PUNCH_GATE;
+    case SDLK_c:                   return PUNCH_TAPESTOP;
+    case SDLK_y:                   return PUNCH_PHONE;
+    default:                       return -1;
+    }
+}
+
+static int punch_press(App *a, int effect)
+{
+    if (!punch_enabled(a) || effect < 0 || effect >= PUNCH_COUNT) return 0;
+    if (a->punch_held >= 0) return 0;          /* one at a time */
+    if (engine_punch_active(&a->eng) >= 0 ||
+        engine_punch_pending(&a->eng) >= 0) return 0;
+    a->punch_held = effect;
+    engine_punch_trigger(&a->eng, effect);
+    return 1;
+}
+
+static void punch_release_effect(App *a, int effect)
+{
+    if (a->punch_held < 0) return;
+    if (effect >= 0 && a->punch_held != effect) return;
+    a->punch_held = -1;
+    engine_punch_release(&a->eng);
+}
+
+static void punch_release_all(App *a)
+{
+    punch_release_effect(a, -1);
+}
+
 static int any_shoulder_held(const App *a)
 {
     for (int i = 0; i < SH_COUNT; i++)
@@ -2230,6 +2373,7 @@ static void handle_shoulder(App *a, int sh, int down)
     Uint32 now = SDL_GetTicks();
 
     if (down) {
+        if (sh == SH_R1 && !a->sh_held[sh]) punch_release_all(a);
         a->sh_held[sh] = 1;
         a->sh_last = sh;
         a->sh_suppress = 0;
@@ -2238,6 +2382,7 @@ static void handle_shoulder(App *a, int sh, int down)
         return;
     }
 
+    if (sh == SH_R1) punch_release_all(a);
     a->sh_held[sh] = 0;
     if (a->sh_last == sh) {
         a->sh_last = -1;
@@ -2259,6 +2404,7 @@ static int shortcut_activate(App *a, int sh, int ad)
         if (ad == ACT_LEFT)  { a->mode = MODE_TEMPO; return 1; }
         if (ad == ACT_RIGHT) { a->mode = MODE_SWING; return 1; }
         if (ad == ACT_UP)    { a->mode = MODE_LENGTH; return 1; }
+        if (ad == ACT_DOWN)  { a->mode = MODE_RCH; return 1; }
         break;
     case SH_L2:
         if (ad == ACT_LEFT) {
@@ -2270,14 +2416,11 @@ static int shortcut_activate(App *a, int sh, int ad)
             open_song_mode(a);
             return 1;
         }
-        break;
-    case SH_R1:
-        if (ad == ACT_LEFT) {
+        if (ad == ACT_UP) {
             a->mode = MODE_KIT;
             a->cur_step = a->eng.kit[a->cur_track];
             return 1;
         }
-        if (ad == ACT_RIGHT) { a->mode = MODE_RCH; return 1; }
         break;
     case SH_R2:
         if (ad == ACT_UP)    { fx_open_section(a, FXR_DRIVE_ON); return 1; }
@@ -2306,6 +2449,13 @@ static int shortcut_dir(App *a, int ad)
     if (a->sh_suppress || !shortcuts_enabled(a)) return 0;
     int sh = active_shoulder(a);
     if (sh < 0) return 0;
+
+    if (sh == SH_R1) {
+        if (!punch_enabled(a)) return 0;
+        int eff = punch_for_dir(ad);
+        if (eff >= 0) punch_press(a, eff);
+        return 1;                  /* always consume; never move the cursor */
+    }
 
     if (shortcut_activate(a, sh, ad)) {
         a->sh_suppress = 1;
@@ -2372,16 +2522,25 @@ static int test_shortcuts_run(App *a)
     a->sh_suppress = 0;
 
     a->mode = MODE_EDIT;
-    handle_shoulder(a, SH_R1, 1);
-    input_dir(a, ACT_LEFT);
-    CHECK(a->mode == MODE_KIT, "R1+Left opens sample selection");
-    handle_shoulder(a, SH_R1, 0);
+    handle_shoulder(a, SH_L1, 1);
+    input_dir(a, ACT_DOWN);
+    CHECK(a->mode == MODE_RCH, "L1+Down opens ratchet notes");
+    handle_shoulder(a, SH_L1, 0);
     a->sh_suppress = 0;
 
     a->mode = MODE_EDIT;
+    handle_shoulder(a, SH_L2, 1);
+    input_dir(a, ACT_UP);
+    CHECK(a->mode == MODE_KIT, "L2+Up opens sample selection");
+    handle_shoulder(a, SH_L2, 0);
+    a->sh_suppress = 0;
+
+    a->mode = MODE_EDIT;
+    a->punch_held = -1;
     handle_shoulder(a, SH_R1, 1);
-    input_dir(a, ACT_RIGHT);
-    CHECK(a->mode == MODE_RCH, "R1+Right opens ratchet notes");
+    input_dir(a, ACT_LEFT);
+    CHECK(a->mode == MODE_EDIT && engine_punch_pending(&a->eng) == PUNCH_LOOP_4,
+          "R1+Left triggers the 1/4 punch loop");
     handle_shoulder(a, SH_R1, 0);
     a->sh_suppress = 0;
 
@@ -3076,6 +3235,10 @@ static void gc_note_mapping(SDL_GameController *gc)
 
 static void handle_key(App *a, SDL_Keycode k)
 {
+    if (punch_enabled(a)) {
+        int eff = punch_for_key(k);
+        if (eff >= 0) { punch_press(a, eff); return; }
+    }
     switch (k) {
     case SDLK_UP: case SDLK_w:     input_dir(a, ACT_UP); break;
     case SDLK_DOWN: case SDLK_s:   input_dir(a, ACT_DOWN); break;
@@ -3101,7 +3264,18 @@ static void handle_key(App *a, SDL_Keycode k)
 
 static void handle_key_up(App *a, SDL_Keycode k)
 {
+    int eff = punch_for_key(k);
+    if (eff >= 0) { punch_release_effect(a, eff); return; }
+
     switch (k) {
+    case SDLK_UP: case SDLK_w:
+        punch_release_effect(a, punch_for_dir(ACT_UP)); break;
+    case SDLK_DOWN: case SDLK_s:
+        punch_release_effect(a, punch_for_dir(ACT_DOWN)); break;
+    case SDLK_LEFT: case SDLK_a:
+        punch_release_effect(a, punch_for_dir(ACT_LEFT)); break;
+    case SDLK_RIGHT: case SDLK_d:
+        punch_release_effect(a, punch_for_dir(ACT_RIGHT)); break;
     case SDLK_1: handle_shoulder(a, SH_L1, 0); break;
     case SDLK_2: handle_shoulder(a, SH_L2, 0); break;
     case SDLK_3: handle_shoulder(a, SH_R1, 0); break;
@@ -3119,6 +3293,15 @@ static void handle_gc_button(App *a, int button, int down)
     if (button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
         handle_shoulder(a, SH_R1, down);
         return;
+    }
+
+    if (punch_enabled(a)) {
+        int eff = punch_for_gc_button(button);
+        if (eff >= 0) {
+            if (down) punch_press(a, eff);
+            else      punch_release_effect(a, eff);
+            return;
+        }
     }
 
     if (down) {
@@ -3147,6 +3330,7 @@ static void handle_gc_button(App *a, int button, int down)
         case SDL_CONTROLLER_BUTTON_DPAD_UP: case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
         case SDL_CONTROLLER_BUTTON_DPAD_LEFT: case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
             if (held_dir == dir_action(button)) held_dir = 0;
+            punch_release_effect(a, punch_for_dir(dir_action(button)));
             break;
         default: break;
         }
@@ -3158,6 +3342,15 @@ static void handle_joy_button(App *a, int button, int down)
     /* raw fallback: buttons 4/5 are the L1/R1 shoulders on the SP mapping */
     if (button == 4) { handle_shoulder(a, SH_L1, down); return; }
     if (button == 5) { handle_shoulder(a, SH_R1, down); return; }
+
+    if (punch_enabled(a)) {
+        int eff = punch_for_raw_button(button);
+        if (eff >= 0) {
+            if (down) punch_press(a, eff);
+            else      punch_release_effect(a, eff);
+            return;
+        }
+    }
     if (!down) return;
 
     switch (button) {
@@ -3178,8 +3371,23 @@ static void handle_joy_button(App *a, int button, int down)
 
 static void handle_joy_hat(App *a, int hat, int dir)
 {
-    if (hat != 0 || dir == SDL_HAT_CENTERED) return;
+    if (hat != 0) return;
     if (saw_dpad_buttons) return;
+
+    if (punch_enabled(a)) {
+        if (dir == SDL_HAT_CENTERED) { punch_release_all(a); return; }
+        int eff = (dir & SDL_HAT_UP)    ? PUNCH_LOOP_16
+                : (dir & SDL_HAT_DOWN)  ? PUNCH_LOOP_32
+                : (dir & SDL_HAT_LEFT)  ? PUNCH_LOOP_4
+                : (dir & SDL_HAT_RIGHT) ? PUNCH_LOOP_8 : -1;
+        if (eff >= 0) {
+            if (a->punch_held >= 0 && a->punch_held != eff) punch_release_all(a);
+            punch_press(a, eff);
+        }
+        return;
+    }
+
+    if (dir == SDL_HAT_CENTERED) return;
     if (dir & SDL_HAT_UP) input_dir(a, ACT_UP);
     if (dir & SDL_HAT_DOWN) input_dir(a, ACT_DOWN);
     if (dir & SDL_HAT_LEFT) input_dir(a, ACT_LEFT);
@@ -3214,11 +3422,138 @@ static void handle_joy_axis(App *a, int axis, int val)
     int nd = 0;
     if (val > 12000) nd = 1;
     else if (val < -12000) nd = -1;
+
+    if (punch_enabled(a)) {
+        int e1 = punch_for_dir(axis == 0 ? ACT_LEFT : ACT_UP);
+        int e2 = punch_for_dir(axis == 0 ? ACT_RIGHT : ACT_DOWN);
+        if (nd == 0) {
+            if (a->punch_held == e1 || a->punch_held == e2) punch_release_all(a);
+            return;
+        }
+        int eff = punch_for_dir(axis == 0
+                                ? (nd > 0 ? ACT_RIGHT : ACT_LEFT)
+                                : (nd > 0 ? ACT_DOWN : ACT_UP));
+        if (eff >= 0) {
+            if (a->punch_held >= 0 && a->punch_held != eff) punch_release_all(a);
+            punch_press(a, eff);
+        }
+        return;
+    }
+
     if (nd == dir[axis]) return;
     dir[axis] = nd;
     if (!nd) return;
     if (axis == 0) input_dir(a, nd > 0 ? ACT_RIGHT : ACT_LEFT);
     else           input_dir(a, nd > 0 ? ACT_DOWN : ACT_UP);
+}
+
+/* Headless punch-in checks (`--test-punch`). */
+static int test_punch_run(App *a)
+{
+    int fails = 0;
+    SDL_Init(SDL_INIT_TIMER);
+
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    CHECK(perf_fx_selftest(44100) == 0, "punch FX DSP self-test");
+
+    float *buf = malloc(sizeof(float) * 2 * 512);
+    if (!buf) { CHECK(0, "punch test buffer"); SDL_Quit(); return 1; }
+
+    Engine e;
+    engine_init(&e, 44100);
+    e.bpm_x100 = 12000;
+    for (int t = 0; t < N_TRACKS; t++)
+        for (int s = 0; s < N_STEPS; s++)
+            e.lvl[t][s] = e.rch[t][s] = 0;
+    e.lvl[0][0] = LVL_ON;
+    e.playing = 1;
+    engine_restart(&e);
+    engine_mix(&e, buf, 256);                 /* step 0 fires */
+    engine_punch_trigger(&e, PUNCH_LOOP_4);
+    engine_mix(&e, buf, 256);
+    CHECK(engine_punch_active(&e) == -1 &&
+          engine_punch_pending(&e) == PUNCH_LOOP_4,
+          "punch waits for the next 16th boundary");
+    for (int n = 0; n < 13; n++) engine_mix(&e, buf, 512);
+    CHECK(engine_punch_active(&e) == PUNCH_LOOP_4,
+          "punch starts on the next 16th");
+    engine_punch_release(&e);
+    for (int n = 0; n < 8; n++) engine_mix(&e, buf, 512);
+    CHECK(engine_punch_active(&e) == -1,
+          "punch release returns to live audio");
+    engine_free(&e);
+
+    /* Song playback uses the same step-boundary quantization. */
+    SongSet *set = calloc(1, sizeof *set);
+    if (set) {
+        Engine s;
+        engine_init(&s, 44100);
+        pattern_default_snapshot(&set->pat[0]);
+        set->count = 1;
+        set->pat[0].bpm_x100 = 12000;
+        set->pat[0].lvl[0][0] = LVL_ON;
+        engine_song_start(&s, set, 0, 0);
+        engine_restart(&s);
+        engine_mix(&s, buf, 256);
+        engine_punch_trigger(&s, PUNCH_LOOP_8);
+        engine_mix(&s, buf, 256);
+        CHECK(engine_punch_pending(&s) == PUNCH_LOOP_8,
+              "song punch waits for the next 16th");
+        for (int n = 0; n < 13; n++) engine_mix(&s, buf, 512);
+        CHECK(engine_punch_active(&s) == PUNCH_LOOP_8,
+              "song punch starts on the next 16th");
+        engine_punch_release(&s);
+        engine_song_stop(&s);
+        engine_free(&s);
+        free(set);
+    } else {
+        CHECK(0, "song punch test buffer");
+    }
+
+    /* Input layer: R1 + face button, one at a time, release, no mute leak. */
+    a->mode = MODE_EDIT;
+    a->punch_held = -1;
+    a->eng.mute[0] = 0;
+    handle_shoulder(a, SH_R1, 1);
+    handle_gc_button(a, SDL_CONTROLLER_BUTTON_A, 1);
+    CHECK(a->punch_held == PUNCH_REWIND &&
+          engine_punch_pending(&a->eng) == PUNCH_REWIND,
+          "R1+A triggers rewind");
+    handle_gc_button(a, SDL_CONTROLLER_BUTTON_B, 1);
+    CHECK(a->punch_held == PUNCH_REWIND,
+          "second punch press is ignored while one is held");
+    handle_gc_button(a, SDL_CONTROLLER_BUTTON_A, 0);
+    CHECK(a->punch_held < 0, "releasing the face button releases the punch");
+    handle_shoulder(a, SH_R1, 0);
+
+    a->punch_held = -1;
+    a->eng.mute[0] = 0;
+    handle_shoulder(a, SH_R1, 1);
+    handle_gc_button(a, SDL_CONTROLLER_BUTTON_Y, 1);
+    CHECK(a->eng.mute[0] == 0 &&
+          engine_punch_pending(&a->eng) == PUNCH_PHONE,
+          "R1+Y triggers phone without muting");
+    handle_gc_button(a, SDL_CONTROLLER_BUTTON_Y, 0);
+    handle_shoulder(a, SH_R1, 0);
+
+    a->mode = MODE_EDIT;
+    a->punch_held = -1;
+    handle_shoulder(a, SH_R1, 1);
+    input_dir(a, ACT_LEFT);
+    CHECK(engine_punch_pending(&a->eng) == PUNCH_LOOP_4,
+          "R1+Left triggers the 1/4 punch loop");
+    handle_shoulder(a, SH_R1, 0);
+    CHECK(engine_punch_pending(&a->eng) < 0,
+          "releasing R1 cancels a pending punch");
+
+    free(buf);
+    SDL_Quit();
+    return fails ? 1 : 0;
+#undef CHECK
 }
 
 /* ---------------------------------------------------------------- bounce */
@@ -3261,6 +3596,7 @@ int main(int argc, char **argv)
     memset(&a, 0, sizeof a);
     a.cur_track = 0; a.cur_step = 0; a.mode = MODE_EDIT; a.pat_sel = 1;
     a.sh_last = -1;
+    a.punch_held = -1;
 
     const char *assets_arg = NULL;
     const char *bounce = NULL;
@@ -3276,6 +3612,7 @@ int main(int argc, char **argv)
     int test_length = 0;
     int test_fx = 0;
     int test_mute = 0;
+    int test_punch = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -3294,11 +3631,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--test-length")) test_length = 1;
         else if (!strcmp(argv[i], "--test-fx")) test_fx = 1;
         else if (!strcmp(argv[i], "--test-mute")) test_mute = 1;
+        else if (!strcmp(argv[i], "--test-punch")) test_punch = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
-                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute]"
-                   " [--screenshot out.bmp [--mode edit|mute|kit|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|l1|l2|r1|r2]]\n");
+                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch]"
+                   " [--screenshot out.bmp [--mode edit|mute|punch|kit|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|l1|l2|r1|r2]]\n");
             return 0;
         }
     }
@@ -3320,7 +3658,7 @@ int main(int argc, char **argv)
         return rc;
     }
 
-    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute) {
+    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch) {
         samples_load_all(assets, 44100);
         resolve_conf(&a, base ? base : ".");
         load_fx_settings(&a);
@@ -3332,6 +3670,7 @@ int main(int argc, char **argv)
         if (test_length) return test_length_run(&a);
         if (test_fx) return test_fx_run(&a);
         if (test_mute) return test_mute_run(&a);
+        if (test_punch) return test_punch_run(&a);
 
         if (save_slot_set) {
             engine_free(&a.eng);
@@ -3440,6 +3779,13 @@ int main(int argc, char **argv)
                 a.eng.mute[0] = 1;
                 a.eng.mute[5] = 1;
                 a.cur_track = 0;
+            }
+            else if (!strcmp(mode_arg, "punch")) {
+                a.mode = MODE_EDIT;
+                a.sh_held[SH_R1] = 1;
+                a.sh_last = SH_R1;
+                a.punch_held = PUNCH_GATE;
+                a.shortcut_until = SDL_GetTicks() + 60000;
             }
             else if (!strcmp(mode_arg, "kit"))   { a.mode = MODE_KIT; a.cur_step = a.eng.kit[a.cur_track]; }
             else if (!strcmp(mode_arg, "rch"))   a.mode = MODE_RCH;

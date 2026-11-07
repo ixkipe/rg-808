@@ -83,6 +83,8 @@ typedef struct Voice {
     int track;
 } Voice;
 
+struct PerfFxState;
+
 typedef struct Engine {
     /* UI thread -> audio thread */
     volatile int playing;
@@ -127,6 +129,7 @@ typedef struct Engine {
     Voice voices[MAX_VOICES];
     unsigned long long voice_fire[MAX_VOICES]; /* for stealing */
     struct FxState *fx_state;              /* heap-allocated effect buffers/state */
+    struct PerfFxState *perf_fx;           /* heap-allocated punch-in FX state */
     int rate;
     float master;
 } Engine;
@@ -148,6 +151,13 @@ void engine_fire_step(Engine *e, int step);       /* fire all notes at this step
 void engine_preview(Engine *e, int track, int variant, int rch, int lvl); /* audition ASAP (X) */
 void engine_restart(Engine *e);                   /* restart clock from step 0 / start bar */
 void engine_mix(Engine *e, float *dst, int frames); /* advance clock + fill dst (stereo interleaved) */
+
+/* Performance punch-in FX (R1 layer). Requests are consumed by the audio
+ * thread at the next 16th-step boundary; release is immediate. */
+void engine_punch_trigger(Engine *e, int effect);
+void engine_punch_release(Engine *e);
+int engine_punch_active(const Engine *e);         /* playing effect or -1 */
+int engine_punch_pending(const Engine *e);        /* waiting effect or -1 */
 
 /* Song playback: the UI prepares an immutable SongSet, then starts/stops it. */
 void engine_song_start(Engine *e, const SongSet *set, int loop, int start_bar);

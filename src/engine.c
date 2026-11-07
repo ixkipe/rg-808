@@ -1,5 +1,6 @@
 #include "engine.h"
 #include "fx.h"
+#include "perf_fx.h"
 #include "samples.h"
 #include <math.h>
 #include <stdlib.h>
@@ -84,6 +85,7 @@ void engine_init(Engine *e, int rate)
     fx_defaults(&fx);
     fx_apply(e, &fx);
     e->fx_state = calloc(1, sizeof(FxState));
+    e->perf_fx = perf_fx_create(rate);
 }
 
 void engine_free(Engine *e)
@@ -91,6 +93,8 @@ void engine_free(Engine *e)
     if (!e) return;
     free(e->fx_state);
     e->fx_state = NULL;
+    perf_fx_destroy(e->perf_fx);
+    e->perf_fx = NULL;
 }
 
 /* Steal the oldest voice, preferring the same track. */
@@ -133,6 +137,26 @@ void engine_preview(Engine *e, int track, int variant, int rch, int lvl)
         e->preview_lvl = lvl;
         e->preview_track = track + 1;
     }
+}
+
+void engine_punch_trigger(Engine *e, int effect)
+{
+    if (e) perf_fx_request(e->perf_fx, effect);
+}
+
+void engine_punch_release(Engine *e)
+{
+    if (e) perf_fx_release(e->perf_fx);
+}
+
+int engine_punch_active(const Engine *e)
+{
+    return e ? perf_fx_active(e->perf_fx) : -1;
+}
+
+int engine_punch_pending(const Engine *e)
+{
+    return e ? perf_fx_pending(e->perf_fx) : -1;
 }
 
 /* Schedule hit(s) for one voice: straight, ratchet roll (2/3/4 even subs) or
@@ -218,15 +242,18 @@ void engine_song_set_loop(Engine *e, int loop)
 }
 
 /* Advance the song clock through one buffer. Per-bar BPM/swing come from the
- * immutable snapshot, so pattern changes are gapless at the bar boundary. */
-static void mix_song_steps(Engine *e, int frames)
+ * immutable snapshot, so pattern changes are gapless at the bar boundary.
+ * Returns the sample offset of the first step boundary when a punch-in is
+ * waiting, or -1. */
+static int mix_song_steps(Engine *e, int frames, int want_punch)
 {
+    int punch_at = -1;
     const SongSet *set = (const SongSet *)e->song_set;
     int count = set ? set->count : 0;
     if (count <= 0) {
         e->song_playing = 0;
         e->playing = 0;
-        return;
+        return -1;
     }
     if (e->song_bar < 0 || e->song_bar >= count) e->song_bar = 0;
 
@@ -234,6 +261,8 @@ static void mix_song_steps(Engine *e, int frames)
     while (e->next_step <= end) {
         int at = (int)(e->next_step - (double)e->total_pos);
         if (at < 0) at = 0;
+        if (at > frames) at = frames;
+        if (want_punch && punch_at < 0) punch_at = at;
 
         /* Advance within the current bar. The bar length comes from that
          * bar's snapshot, so patterns of different lengths chain gaplessly. */
@@ -269,6 +298,7 @@ static void mix_song_steps(Engine *e, int frames)
         }
         e->next_step += sps;
     }
+    return punch_at;
 }
 
 /* --------------------------------------------------------------- effects */
@@ -529,10 +559,12 @@ void engine_mix(Engine *e, float *dst, int frames)
      * but this buffer should stay on one path. */
     int playing = e->playing;
     int song = e->song_playing;
+    int want_punch = e->perf_fx && perf_fx_pending(e->perf_fx) >= 0;
+    int punch_at = -1;
 
     if (playing) {
         if (song) {
-            mix_song_steps(e, frames);
+            punch_at = mix_song_steps(e, frames, want_punch);
             e->cur_step = e->playing ? (e->step < 0 ? 0 : e->step) : -1;
         } else {
             double sps = samples_per_step(e);
@@ -541,6 +573,8 @@ void engine_mix(Engine *e, float *dst, int frames)
             while (e->next_step <= (double)(e->total_pos + (unsigned long long)frames)) {
                 int at = (int)(e->next_step - (double)e->total_pos);
                 if (at < 0) at = 0;
+                if (at > frames) at = frames;
+                if (want_punch && punch_at < 0) punch_at = at;
                 e->step++;
                 if (e->step >= len) e->step = 0;
                 at += swing_delay_pct(e->swing_pct, e->step, sps);
@@ -558,6 +592,7 @@ void engine_mix(Engine *e, float *dst, int frames)
         e->cur_step = -1;
         e->next_step = (double)e->total_pos + samples_per_step(e);
         if (e->song_playing) e->song_playing = 0;
+        if (want_punch) punch_at = 0;
     }
 
     /* render active voices into the buffer (mono sum duplicated to stereo) */
@@ -581,13 +616,18 @@ void engine_mix(Engine *e, float *dst, int frames)
 
     /* master effects, before master gain + soft clip. The delay's tempo sync
      * follows the live tempo or the current song bar's tempo. */
-    if (e->fx.on) {
-        int fx_bpm = e->bpm_x100;
-        const SongSet *fx_set = (const SongSet *)e->song_set;
-        if (song && fx_set && e->song_bar >= 0 && e->song_bar < fx_set->count)
-            fx_bpm = fx_set->pat[e->song_bar].bpm_x100;
+    int fx_bpm = e->bpm_x100;
+    const SongSet *fx_set = (const SongSet *)e->song_set;
+    if (song && fx_set && e->song_bar >= 0 && e->song_bar < fx_set->count)
+        fx_bpm = fx_set->pat[e->song_bar].bpm_x100;
+    if (e->fx.on)
         fx_process(e, dst, frames, fx_bpm);
-    }
+
+    /* performance punch-in FX sit after the master chain so stutters and
+     * rewinds capture its tails; they are bypassed by the offline renderers
+     * because those engines never request an effect. */
+    if (e->perf_fx)
+        perf_fx_process(e->perf_fx, dst, frames, fx_bpm, punch_at);
 
     /* master gain + cheap soft clip */
     float m = e->master;
