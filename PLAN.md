@@ -1,6 +1,6 @@
 # RG-808 Development Plan
 
-**Current version: 0.1** (2026-11-07). M1–M9.5 are implemented on PC and in the
+**Current version: 0.1** (2026-11-07). M1–M10 are implemented on PC and in the
 dual-arch cross-build; physical-device validation and CPU tuning remain open.
 
 Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster).
@@ -190,10 +190,26 @@ extends M9.
   - [x] Verified by `tools/test-m9.ps1` / `--test-fx` (pattern FX round-trip,
     legacy fallback, per-bar song FX, per-pattern bounce differences, synced
     delay timing, bit-identical bypass). Device CPU spot-check remains pending.
+- [x] **M10 — Performance mute** *(part of the old per-track volume/mute
+  backlog; per-track volume remains open)*
+  - [x] Engine: `mute[N_TRACKS]` global performance state, checked by the live
+    and song step schedulers; `mute_kill_mask` lets the audio thread cut voices
+    that are already ringing when a track is muted. Preview stays audible.
+  - [x] UI: Y toggles the selected track in the sequencer (X remains HEAR);
+    muted rows are tinted and marked with a red `M`; the status bar shows
+    `Y:MUTE`. Y keeps auditioning in kit/ratchet mode and keeps its old
+    behaviour elsewhere.
+  - [x] Mutes are deliberately not persisted (performance state): they survive
+    pattern loads and song bars but reset on restart, and do not affect WAV
+    export.
+  - [x] Verified by `tools/test-mute.ps1` / `--test-mute` (mute silences live and
+    song playback, cuts ringing voices, preview still sounds, UI toggle and KIT
+    audition alias) plus a `--mode mute` screenshot; M6–M9/length/shortcut
+    suites still pass.
 
 ## Current state (as of 2026-11-07)
 
-- **Version 0.1:** M1–M9.5 implemented; PC and both ARM cross-builds pass the
+- **Version 0.1:** M1–M10 implemented; PC and both ARM cross-builds pass the
   automated suites. Device-only checks (controls, audio latency, effects CPU,
   device screenshot) remain.
 - Repo: `master`, all work committed (M1/M2 → tooling/packaging → autosave & fixes).
@@ -236,6 +252,10 @@ extends M9.
   carried per bar by song snapshots; one shared DSP state per engine, so fast
   1-step song bars only update parameters, not effect buffers. `conf/fx.txt`
   remains the fallback for old patterns. Verified by `tools/test-m9.ps1`.
+- M10 shipped (PC): Y mutes/unmutes the selected instrument in the sequencer
+  (X still auditions), with an `M` marker and immediate voice cut; mutes apply
+  to live and song playback, are not persisted, and do not affect export.
+  Verified by `tools/test-mute.ps1` / `--test-mute`.
 - **First real-device session (2026-11-06): the port boots and runs on the SP.**
   Only issue found: D-pad double-fire (fixed in `src/main.c`, rebuilt zip —
   awaiting on-device retest).
@@ -265,9 +285,9 @@ extends M9.
    SELECT, L/R) all correct? If clean → swap in a device screenshot, refresh the
    zip, and M3/M5 can close.
 4. Then pick the v2 entry point (proposal: M3 validation → M6 → M7 → M8; M9 anytime).
-   M6/M7/M8/M8.5/M9/M9.5 are done on PC; the device still needs the M6–M9.5
-   control/DSP pass (pattern browser, song page and export, pattern length,
-   per-pattern effects CPU).
+   M6/M7/M8/M8.5/M9/M9.5/M10 are done on PC; the device still needs the
+   M6–M10 control/DSP pass (pattern browser, song page and export, pattern
+   length, per-pattern effects CPU, Y mute).
 5. Device: check the shoulder shortcut layer - L1/L2/R1/R2 hint overlay and the
    L1+Left/Right/Up, L2+Left/Right, R1+Left/Right and R2+Up/Left/Down/Right
    mappings. L2/R2 are read from SDL's trigger axes (and raw joystick axes

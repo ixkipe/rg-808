@@ -26,7 +26,8 @@ packaging conventions.
 | D-Pad | Move cursor |
 | A | Cycle step: off / on / accent |
 | B | Clear step (back in menus) |
-| X or Y | Hear selected voice |
+| X | Hear selected voice |
+| Y | Mute / unmute selected voice (sequencer) |
 | START | Play / stop |
 | SELECT | Menu (tempo, swing, pattern length, ratchets, kits, effects, save, pattern library, clear, quit) |
 | L1 / L2 / R1 / R2 | Shoulder shortcuts (hold; on-screen D-pad shows each direction) |
@@ -40,7 +41,11 @@ R2+Down = delay FX, R2+Right = reverb FX. Other combinations are reserved
 for future features. Pressing a shoulder shows the D-pad hint overlay;
 releasing it hides the overlay immediately.
 
-Swing (menu -> EDIT SWING) shuffles every even 16th, 0-100%. Pattern length
+Mute: Y toggles a performance mute for the selected instrument in the
+sequencer; X still auditions it. Muted rows are tinted and marked with a red
+M. Mutes apply to live and song playback, cut ringing hits immediately, and
+are not saved with the pattern. Swing (menu -> EDIT SWING) shuffles every even
+16th, 0-100%. Pattern length
 (menu -> PATTERN LENGTH, or L1+Up) plays 1-16 of the 16 steps; steps past the
 end stay stored but dimmed. Ratchet notes
 (menu -> RATCHET NOTES) turn any step into a 2x / 3x / 4x roll or a flam;

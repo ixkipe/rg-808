@@ -53,9 +53,9 @@ rg808.exe --test-fx                     # headless effects checks
 rg808.exe --screenshot shot.bmp         # render one UI frame to BMP
 rg808.exe --screenshot p.bmp --mode pattern   # pattern browser frame
 ```
-Keyboard controls on PC: arrows=dpad, Z/Enter=A, X=B, C=X(hear), Space=START,
-Esc/Backspace=SELECT-menu, 1/2/3/4=L1/L2/R1/R2 (hold + arrows for shortcuts),
-[/]=tempo, Q=quit.
+Keyboard controls on PC: arrows=dpad, Z/Enter=A, X=B, C=X(hear), Y=mute,
+Space=START, Esc/Backspace=SELECT-menu, 1/2/3/4=L1/L2/R1/R2 (hold + arrows for
+shortcuts), [/]=tempo, Q=quit.
 
 ## Building for the device (muOS / PortMaster)
 Requires Docker Desktop (or any docker):
@@ -88,7 +88,8 @@ tools\device\probe.sh > probe.txt 2>&1     # in Mustard Terminal
 | D-Pad | Move cursor (hold to repeat) |
 | A | Cycle step: off → on → accent |
 | B | Clear step (back in menus) |
-| X / Y | Hear sound of the selected track |
+| X | Hear sound of the selected track |
+| Y | Mute / unmute the selected track in the sequencer |
 | START | Play / stop |
 | SELECT | Menu (tempo, swing, pattern length, ratchets, kits, effects, save, pattern library, song mode, clear all, quit) |
 | L1 / L2 / R1 / R2 | Shoulder shortcuts — hold one and a D-pad hint appears |
@@ -112,6 +113,12 @@ cheat sheet for that button. The assigned combinations are:
 
 Other combinations are reserved for future features. Pressing a shoulder shows
 the hint; releasing it hides the hint immediately.
+
+**Mute**: in the sequencer, Y toggles a performance mute for the selected
+instrument; X still auditions it. Muted rows are tinted and marked with a red
+`M`. Mutes apply to live playback and song playback, cut any ringing hit
+immediately, and are not saved with the pattern (they reset on restart).
+Auditioning a muted track still works, so it stays programmable.
 
 **Swing**: menu → EDIT SWING; 0–100 % shuffles every even 16th late
 (~67 % ≈ triplet feel). **Pattern length**: menu → PATTERN LENGTH (or L1 + Up)
@@ -172,7 +179,7 @@ Each voice ships its whole variant family from the pack as `<id>NN.wav`
 the `dflt` column in `src/engine.c`.
 
 ## Status / roadmap
-- **Version 0.1** (2026-11-07): first complete development release. M1–M9.5
+- **Version 0.1** (2026-11-07): first complete development release. M1–M10
   are implemented on PC and both ARM cross-builds; physical-device validation
   and CPU tuning are still pending.
 - v1: single pattern, 11 tracks, accents, sample selection per voice
@@ -181,7 +188,8 @@ the `dflt` column in `src/engine.c`.
   rename/copy/delete and legacy import (M7), shoulder shortcut layer, song
   chains with streaming WAV export (M8), per-pattern length 1–16, and master
   effects (M9: selectable bitcrusher/overdrive/compression, flanger/phaser,
-  tempo-synced delay, reverb) with per-pattern settings (M9.5).
+  tempo-synced delay, reverb) with per-pattern settings (M9.5), and per-track
+  performance mute (Y in the sequencer).
 
 ## Credits & licences
 Code: this project (MIT where not otherwise noted). SDL2 (zlib), public-domain

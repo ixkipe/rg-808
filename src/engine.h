@@ -98,6 +98,13 @@ typedef struct Engine {
     volatile int preview_lvl;              /* level (gain) to audition */
     volatile int restart;                  /* set by UI on play to reset the step counter */
 
+    /* Performance mutes: UI -> audio. Not stored with patterns or song bars;
+     * they persist across pattern changes and reset when the app starts.
+     * mute_kill_mask asks the audio thread to cut voices that are already
+     * ringing when a track is muted. */
+    volatile unsigned char mute[N_TRACKS];
+    volatile unsigned int mute_kill_mask;
+
     /* master effects parameters (per-pattern; UI -> audio) */
     volatile FxSettings fx;
 

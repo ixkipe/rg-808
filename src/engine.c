@@ -189,7 +189,7 @@ void engine_fire_step(Engine *e, int step)
     double sps = samples_per_step(e);
     for (int t = 0; t < N_TRACKS; t++) {
         unsigned char lv = e->lvl[t][step];
-        if (lv > LVL_OFF)
+        if (lv > LVL_OFF && !e->mute[t])
             fire_sched(e, t, e->kit[t], LVL_GAIN[lv], 0, e->rch[t][step], sps);
     }
 }
@@ -263,7 +263,7 @@ static void mix_song_steps(Engine *e, int frames)
         int delay = at + swing_delay_pct(sp->swing_pct, e->step, sps);
         for (int t = 0; t < N_TRACKS; t++) {
             unsigned char lv = sp->lvl[t][e->step];
-            if (lv > LVL_OFF)
+            if (lv > LVL_OFF && !e->mute[t])
                 fire_sched(e, t, sp->kit[t], LVL_GAIN[lv], delay,
                            sp->rch[t][e->step], sps);
         }
@@ -501,6 +501,20 @@ void engine_mix(Engine *e, float *dst, int frames)
 {
     for (int f = 0; f < frames; f++) dst[2*f] = dst[2*f+1] = 0.0f;
 
+    /* Muting a track should cut what is already ringing. The UI only sets
+     * the mask; voice writes stay on the audio thread. */
+    unsigned int kill = e->mute_kill_mask;
+    if (kill) {
+        e->mute_kill_mask = 0;
+        for (int i = 0; i < MAX_VOICES; i++) {
+            Voice *v = &e->voices[i];
+            if (v->data && (kill & (1u << v->track))) {
+                v->data = NULL;
+                v->delay = 0;
+            }
+        }
+    }
+
     if (e->preview_track) {
         int t = e->preview_track - 1;
         int v = e->preview_variant;
@@ -532,7 +546,7 @@ void engine_mix(Engine *e, float *dst, int frames)
                 at += swing_delay_pct(e->swing_pct, e->step, sps);
                 for (int t = 0; t < N_TRACKS; t++) {
                     unsigned char lv = e->lvl[t][e->step];
-                    if (lv > LVL_OFF)
+                    if (lv > LVL_OFF && !e->mute[t])
                         fire_sched(e, t, e->kit[t], LVL_GAIN[lv], at,
                                    e->rch[t][e->step], sps);
                 }

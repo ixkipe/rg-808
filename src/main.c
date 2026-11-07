@@ -50,7 +50,7 @@ enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_KIT, MODE_RCH, MODE_SWING,
 enum Action {
     ACT_NONE, ACT_UP, ACT_DOWN, ACT_LEFT, ACT_RIGHT,
     ACT_CONFIRM, ACT_BACK, ACT_CLEAR, ACT_HEAR, ACT_PLAY, ACT_MENU,
-    ACT_TEMPO_UP, ACT_TEMPO_DOWN, ACT_QUIT, ACT_HEAR_ALT
+    ACT_TEMPO_UP, ACT_TEMPO_DOWN, ACT_QUIT, ACT_MUTE
 };
 
 /* RG35XX SP shoulder buttons. L1/R1 arrive as controller shoulder buttons;
@@ -949,19 +949,28 @@ static void draw_ui(App *a)
     /* grid background bands */
     for (int t = 0; t < N_TRACKS; t++) {
         int y = GRID_Y0 + t * ROW_PITCH;
-        cv_rect(c, 0, y - 3, GRID_X0 - 6, CELL_H + 6, (a->mode == MODE_EDIT && a->cur_track == t) ? C_PANEL : 0x1c1c24);
+        int sel = (a->mode == MODE_EDIT && a->cur_track == t);
+        Uint32 bg = e->mute[t] ? (sel ? 0x3a2226 : 0x281518)
+                               : (sel ? C_PANEL : 0x1c1c24);
+        cv_rect(c, 0, y - 3, GRID_X0 - 6, CELL_H + 6, bg);
     }
 
     /* track labels */
     for (int t = 0; t < N_TRACKS; t++) {
         int y = GRID_Y0 + t * ROW_PITCH + (CELL_H - 8) / 2;
         int on_row = (a->mode == MODE_EDIT || a->mode == MODE_KIT || a->mode == MODE_RCH) && a->cur_track == t;
-        cv_rect(c, 8, GRID_Y0 + t * ROW_PITCH, 4, CELL_H, TRACKS[t].color);
-        cv_text(c, 22, y, TRACKS[t].label, 1, on_row ? TRACKS[t].color : C_TEXT_DIM);
+        int muted = e->mute[t];
+        cv_rect(c, 8, GRID_Y0 + t * ROW_PITCH, 4, CELL_H,
+                muted ? cv_dim(TRACKS[t].color, 0.30f) : TRACKS[t].color);
+        cv_text(c, 22, y, TRACKS[t].label, 1,
+                muted ? cv_dim(TRACKS[t].color, 0.40f)
+                      : (on_row ? TRACKS[t].color : C_TEXT_DIM));
         if (variant_count(t) > 1) {                  /* current variant number */
             snprintf(tbuf, sizeof tbuf, "%d", e->kit[t] + 1);
-            cv_text(c, 46, y, tbuf, 1, C_TEXT_DIM);
+            cv_text(c, 46, y, tbuf, 1, muted ? cv_dim(C_TEXT_DIM, 0.55f) : C_TEXT_DIM);
         }
+        if (muted)                                   /* performance mute marker */
+            cv_text(c, 64, y, "M", 1, C_LED);
     }
 
     /* cells (edit) / variant picker (kit) / ratchet editor (rch) */
@@ -1104,7 +1113,7 @@ static void draw_ui(App *a)
     else if (a->mode == MODE_EXPORT)
         cv_text(c, 10, SCR_H - 14, "EXPORTING WAV - PLEASE WAIT", 1, C_TEXT_DIM);
     else
-        cv_text(c, 10, SCR_H - 14, "A:STEP  B:CLEAR  X:HEAR  START:PLAY  SELECT:MENU  HOLD A SHOULDER", 1, C_TEXT_DIM);
+        cv_text(c, 10, SCR_H - 14, "A:STEP  B:CLEAR  X:HEAR  Y:MUTE  START:PLAY  SELECT:MENU  HOLD A SHOULDER", 1, C_TEXT_DIM);
 
     if (a->mode == MODE_MENU) {
         static const char *items[MENU_N] = {
@@ -1828,10 +1837,18 @@ static void act(App *a, int act)
         }
         case ACT_CLEAR: e->lvl[a->cur_track][a->cur_step] = LVL_OFF; a->dirty = 1; break;
         case ACT_HEAR:
-        case ACT_HEAR_ALT:
             engine_preview(e, a->cur_track, e->kit[a->cur_track],
                            e->rch[a->cur_track][a->cur_step], LVL_ON);
             break;
+        case ACT_MUTE: {
+            int t = a->cur_track;
+            int on = !e->mute[t];
+            e->mute[t] = (unsigned char)on;
+            if (on) e->mute_kill_mask |= 1u << t;
+            else    e->mute_kill_mask &= ~(1u << t);
+            set_msg(a, on ? "MUTE %s" : "UNMUTE %s", TRACKS[t].label);
+            break;
+        }
         case ACT_PLAY:
             toggle_edit_play(a);   /* consumed in audio cb */
             break;
@@ -1874,7 +1891,7 @@ static void act(App *a, int act)
             engine_preview(e, t, a->cur_step, RCH_OFF, LVL_ACC);
             break;
         case ACT_HEAR:
-        case ACT_HEAR_ALT:
+        case ACT_MUTE:
             engine_preview(e, t, a->cur_step, RCH_OFF, LVL_ACC);
             break;
         case ACT_PLAY:
@@ -1900,7 +1917,8 @@ static void act(App *a, int act)
         case ACT_DOWN:       en->bpm_x100 -= 500; break;
         default: break;
         }
-        if (act != ACT_CONFIRM && act != ACT_BACK && act != ACT_MENU && act != ACT_HEAR) a->dirty = 1;
+        if (act != ACT_CONFIRM && act != ACT_BACK && act != ACT_MENU &&
+            act != ACT_HEAR && act != ACT_MUTE) a->dirty = 1;
         if (en->bpm_x100 < 400) en->bpm_x100 = 400;
         if (en->bpm_x100 > 25000) en->bpm_x100 = 25000;
         if (act == ACT_CONFIRM || act == ACT_BACK || act == ACT_MENU) a->mode = MODE_EDIT;
@@ -1917,7 +1935,8 @@ static void act(App *a, int act)
         case ACT_DOWN:       en->swing_pct -= 1;  break;
         default: break;
         }
-        if (act != ACT_CONFIRM && act != ACT_BACK && act != ACT_MENU && act != ACT_HEAR) {
+        if (act != ACT_CONFIRM && act != ACT_BACK && act != ACT_MENU &&
+            act != ACT_HEAR && act != ACT_MUTE) {
             if (en->swing_pct < 0) en->swing_pct = 0;
             if (en->swing_pct > 100) en->swing_pct = 100;
             a->dirty = 1;
@@ -1936,7 +1955,8 @@ static void act(App *a, int act)
         case ACT_DOWN:       en->length -= 1; break;
         default: break;
         }
-        if (act != ACT_CONFIRM && act != ACT_BACK && act != ACT_MENU && act != ACT_HEAR) {
+        if (act != ACT_CONFIRM && act != ACT_BACK && act != ACT_MENU &&
+            act != ACT_HEAR && act != ACT_MUTE) {
             en->length = engine_length_clamp(en->length);
             if (a->cur_step >= en->length) a->cur_step = en->length - 1;
             a->dirty = 1;
@@ -1999,7 +2019,7 @@ static void act(App *a, int act)
             if (e->rch[t][a->cur_step]) { e->rch[t][a->cur_step] = RCH_OFF; a->dirty = 1; }
             break;
         case ACT_HEAR:
-        case ACT_HEAR_ALT:
+        case ACT_MUTE:
             engine_preview(e, t, e->kit[t], e->rch[t][a->cur_step],
                            e->lvl[t][a->cur_step] ? e->lvl[t][a->cur_step] : LVL_ON);
             break;
@@ -2088,6 +2108,7 @@ static void act(App *a, int act)
             a->rename_pos = (a->rename_pos + 1) % PAT_NAME_LEN;
             break;
         case ACT_HEAR:
+        case ACT_MUTE:
         case ACT_CLEAR:
             if (a->rename_pos > 0) a->rename_pos--;
             a->rename_buf[a->rename_pos] = ' ';
@@ -2122,7 +2143,7 @@ static void act(App *a, int act)
             break;
         case ACT_CONFIRM: song_begin_pick(a); break;
         case ACT_HEAR:
-        case ACT_HEAR_ALT:
+        case ACT_MUTE:
             if (a->eng.song_playing && a->song.count > 0) {
                 a->song_sel = a->eng.song_bar;
                 if (a->song_sel < 0) a->song_sel = 0;
@@ -2911,6 +2932,128 @@ static int test_fx_run(App *a)
 #undef CHECK
 }
 
+static float test_peak(const float *buf, int frames)
+{
+    float peak = 0.0f;
+    for (int i = 0; i < frames * 2; i++) {
+        float v = buf[i] < 0.0f ? -buf[i] : buf[i];
+        if (v > peak) peak = v;
+    }
+    return peak;
+}
+
+/* Headless performance-mute checks (`--test-mute`). */
+static int test_mute_run(App *a)
+{
+    int fails = 0;
+    SDL_Init(SDL_INIT_TIMER);
+
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    float buf[2048 * 2];
+    Engine e;
+    engine_init(&e, 44100);
+    for (int t = 0; t < N_TRACKS; t++)
+        for (int s = 0; s < N_STEPS; s++)
+            e.lvl[t][s] = e.rch[t][s] = 0;
+    e.bpm_x100 = 12000;
+    e.lvl[0][0] = LVL_ACC;
+    e.playing = 1;
+    engine_restart(&e);
+    engine_mix(&e, buf, 2048);
+    CHECK(test_peak(buf, 2048) > 0.001f, "unmuted track produces audio");
+
+    e.playing = 0;
+    e.mute[0] = 1;
+    e.mute_kill_mask |= 1u << 0;      /* same as the UI: cut the ringing hit */
+    engine_restart(&e);
+    e.playing = 1;
+    engine_mix(&e, buf, 2048);
+    CHECK(test_peak(buf, 2048) < 0.0001f, "muted track is silent");
+
+    /* Auditioning must still work while the track is muted. */
+    e.preview_track = 0;
+    engine_preview(&e, 0, e.kit[0], RCH_OFF, LVL_ON);
+    engine_mix(&e, buf, 2048);
+    CHECK(test_peak(buf, 2048) > 0.001f, "preview sounds while muted");
+
+    /* Mute-on must cut a voice already ringing, not just skip new hits. */
+    e.playing = 0;
+    e.mute[0] = 0;
+    engine_restart(&e);
+    e.playing = 1;
+    engine_mix(&e, buf, 512);
+    e.mute[0] = 1;
+    e.mute_kill_mask |= 1u << 0;
+    engine_mix(&e, buf, 256);
+    CHECK(test_peak(buf, 256) < 0.0001f, "mute cuts ringing voices");
+
+    e.playing = 0;
+    e.mute[0] = 0;
+    e.mute_kill_mask = 0;
+    engine_restart(&e);
+    e.playing = 1;
+    engine_mix(&e, buf, 2048);
+    CHECK(test_peak(buf, 2048) > 0.001f, "unmute restores audio");
+    e.playing = 0;
+    engine_free(&e);
+
+    /* The same flag must gate song playback, not only the live pattern. */
+    SongSet *set = calloc(1, sizeof *set);
+    if (set) {
+        Engine s;
+        engine_init(&s, 44100);
+        pattern_default_snapshot(&set->pat[0]);
+        set->count = 1;
+        set->pat[0].bpm_x100 = 12000;
+        set->pat[0].length = N_STEPS;
+        set->pat[0].lvl[0][0] = LVL_ACC;
+        s.mute[0] = 1;
+        engine_song_start(&s, set, 0, 0);
+        engine_restart(&s);
+        engine_mix(&s, buf, 2048);
+        CHECK(test_peak(buf, 2048) < 0.0001f, "muted track is silent in a song");
+        s.mute[0] = 0;
+        engine_restart(&s);
+        engine_mix(&s, buf, 2048);
+        CHECK(test_peak(buf, 2048) > 0.001f, "unmute restores song audio");
+        engine_song_stop(&s);
+        engine_free(&s);
+        free(set);
+    } else {
+        CHECK(0, "song test buffer");
+    }
+
+    /* UI/action wiring: Y mutes in the sequencer but still auditions in KIT. */
+    Engine *ue = &a->eng;
+    a->mode = MODE_EDIT;
+    a->cur_track = 5;
+    ue->mute[5] = 0;
+    ue->mute_kill_mask = 0;
+    act(a, ACT_MUTE);
+    CHECK(ue->mute[5] == 1, "Y mutes the selected track");
+    CHECK((ue->mute_kill_mask & (1u << 5)) != 0, "mute requests a voice cut");
+    act(a, ACT_MUTE);
+    CHECK(ue->mute[5] == 0, "Y unmutes the selected track");
+
+    a->mode = MODE_KIT;
+    a->cur_track = 0;
+    a->cur_step = 0;
+    ue->mute[0] = 0;
+    ue->preview_track = 0;
+    act(a, ACT_MUTE);
+    CHECK(ue->mute[0] == 0, "Y does not mute outside the sequencer");
+    CHECK(ue->preview_track == 1, "Y still auditions in KIT mode");
+    ue->preview_track = 0;
+
+    SDL_Quit();
+    return fails ? 1 : 0;
+#undef CHECK
+}
+
 static int joy_covered_by_controller(SDL_JoystickID which)
 {
     return SDL_GameControllerFromInstanceID(which) != NULL;
@@ -2941,6 +3084,7 @@ static void handle_key(App *a, SDL_Keycode k)
     case SDLK_z: case SDLK_RETURN: act(a, ACT_CONFIRM); break;
     case SDLK_x:                   act(a, (a->mode == MODE_EDIT || a->mode == MODE_RCH) ? ACT_CLEAR : ACT_BACK); break;
     case SDLK_c:                   act(a, ACT_HEAR); break;
+    case SDLK_y:                   act(a, ACT_MUTE); break;
     case SDLK_SPACE:               act(a, ACT_PLAY); break;
     case SDLK_m: case SDLK_ESCAPE: act(a, ACT_MENU); break;
     case SDLK_BACKSPACE:           act(a, a->mode == MODE_RENAME ? ACT_HEAR : ACT_BACK); break;
@@ -2981,7 +3125,8 @@ static void handle_gc_button(App *a, int button, int down)
         switch (button) {
         case SDL_CONTROLLER_BUTTON_A: act(a, ACT_CONFIRM); break;
         case SDL_CONTROLLER_BUTTON_B: act(a, (a->mode == MODE_EDIT || a->mode == MODE_RCH) ? ACT_CLEAR : ACT_BACK); break;
-        case SDL_CONTROLLER_BUTTON_X: case SDL_CONTROLLER_BUTTON_Y: act(a, ACT_HEAR); break;
+        case SDL_CONTROLLER_BUTTON_X: act(a, ACT_HEAR); break;
+        case SDL_CONTROLLER_BUTTON_Y: act(a, ACT_MUTE); break;
         case SDL_CONTROLLER_BUTTON_START: act(a, ACT_PLAY); break;
         case SDL_CONTROLLER_BUTTON_BACK: act(a, ACT_MENU); break;
         case SDL_CONTROLLER_BUTTON_DPAD_UP: case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
@@ -3019,7 +3164,7 @@ static void handle_joy_button(App *a, int button, int down)
     case 0: act(a, ACT_CONFIRM); break;       /* A */
     case 1: act(a, (a->mode == MODE_EDIT || a->mode == MODE_RCH) ? ACT_CLEAR : ACT_BACK); break;  /* B */
     case 2: act(a, ACT_HEAR); break;          /* X */
-    case 3: act(a, ACT_HEAR_ALT); break;      /* Y */
+    case 3: act(a, ACT_MUTE); break;          /* Y */
     case 6: act(a, ACT_MENU); break;          /* SELECT */
     case 7: act(a, ACT_PLAY); break;          /* START */
     case 8: case 9: a->quit = 1; break;       /* HOLD etc. -> quit */
@@ -3130,6 +3275,7 @@ int main(int argc, char **argv)
     int test_song = 0;
     int test_length = 0;
     int test_fx = 0;
+    int test_mute = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -3147,11 +3293,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--test-song")) test_song = 1;
         else if (!strcmp(argv[i], "--test-length")) test_length = 1;
         else if (!strcmp(argv[i], "--test-fx")) test_fx = 1;
+        else if (!strcmp(argv[i], "--test-mute")) test_mute = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
-                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx]"
-                   " [--screenshot out.bmp [--mode edit|kit|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|l1|l2|r1|r2]]\n");
+                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute]"
+                   " [--screenshot out.bmp [--mode edit|mute|kit|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|l1|l2|r1|r2]]\n");
             return 0;
         }
     }
@@ -3173,7 +3320,7 @@ int main(int argc, char **argv)
         return rc;
     }
 
-    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx) {
+    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute) {
         samples_load_all(assets, 44100);
         resolve_conf(&a, base ? base : ".");
         load_fx_settings(&a);
@@ -3184,6 +3331,7 @@ int main(int argc, char **argv)
         if (test_song) return test_song_run(&a);
         if (test_length) return test_length_run(&a);
         if (test_fx) return test_fx_run(&a);
+        if (test_mute) return test_mute_run(&a);
 
         if (save_slot_set) {
             engine_free(&a.eng);
@@ -3287,7 +3435,13 @@ int main(int argc, char **argv)
     if (shot) {
         /* one UI frame -> BMP */
         if (mode_arg) {
-            if (!strcmp(mode_arg, "kit"))   { a.mode = MODE_KIT; a.cur_step = a.eng.kit[a.cur_track]; }
+            if (!strcmp(mode_arg, "mute")) {
+                a.mode = MODE_EDIT;
+                a.eng.mute[0] = 1;
+                a.eng.mute[5] = 1;
+                a.cur_track = 0;
+            }
+            else if (!strcmp(mode_arg, "kit"))   { a.mode = MODE_KIT; a.cur_step = a.eng.kit[a.cur_track]; }
             else if (!strcmp(mode_arg, "rch"))   a.mode = MODE_RCH;
             else if (!strcmp(mode_arg, "swing")) a.mode = MODE_SWING;
             else if (!strcmp(mode_arg, "length")) a.mode = MODE_LENGTH;
