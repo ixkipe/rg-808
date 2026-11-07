@@ -8,6 +8,12 @@ vendor/*.zip
 
 # original sample pack stays untracked; curated kit under assets/ is tracked
 Roland TR-808/
+assets/wav/707
+assets/wav/808
+assets/wav/909
+assets/wav/LM1
+assets/wav/DMX
+assets/wav/E-MU
 
 # generated
 dist/
