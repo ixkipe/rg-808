@@ -1,5 +1,11 @@
 # RG-SMP - an 11-track sample drum machine for the Anbernic RG35XX SP
 
+![Sequencer](screenshots/sequencer.png)
+
+![Sample Kit](screenshots/sample_select.png)
+
+![FX](screenshots/fx.png)
+
 A 1-16-step, 11-track sample drum machine written in C with SDL2, packaged as a
 PortMaster "ready-to-run" port. It has a recursive WAV sample browser, one
 sample per track, per-step accents, sample-accurate sequencing, a 200-slot
