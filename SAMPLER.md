@@ -1,4 +1,11 @@
 # RG-SMP
+
+![Sequencer](screenshots/sequencer.png)
+
+![Sample Kit](screenshots/sample_select.png)
+
+![FX](screenshots/fx.png)
+
 - 11 tracks
 - sample browser (instead of RD-808's sample kit)
   - show .wav files in assets/wav folder, can select for a particular track
