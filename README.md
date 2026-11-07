@@ -1,5 +1,11 @@
 # RG-808 — a Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster)
 
+![Sequencer](screenshots/sequencer.png)
+
+![Sample Kit](screenshots/sample_select.png)
+
+![FX](screenshots/fx.png)
+
 **Version 0.1** — first complete development release (2026-11-07).
 
 A 1–16-step, 11-track drum machine written in C with SDL2, packaged as a
