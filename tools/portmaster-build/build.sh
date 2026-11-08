@@ -4,7 +4,7 @@
 set -e
 cd /src
 
-SRCS="src/core/engine.c src/core/canvas.c src/core/wav.c src/core/pattern.c src/core/song.c src/core/fx.c src/core/perf_fx.c src/machines/808/machine.c src/machines/808/samples.c src/machines/808/main.c"
+SRCS="src/core/engine.c src/core/canvas.c src/core/wav.c src/core/pattern.c src/core/song.c src/core/fx.c src/core/perf_fx.c src/core/step_ui.c src/machines/808/machine.c src/machines/808/samples.c src/machines/808/main.c"
 CFLAGS="-O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Isrc/core -Isrc/machines/808 -I/usr/include/SDL2 -DNDEBUG"
 LIBS="-lSDL2 -lm"
 
