@@ -5,22 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* RG-SMP track slots. Every slot is identical apart from its shade; the
- * assigned sample is shown in the browser, not in the grid header. */
-const TrackInfo TRACKS[N_TRACKS] = {
-    { "01", "TRACK 01", 0xE8E8E8, 0.85f },
-    { "02", "TRACK 02", 0xC8C8C8, 0.85f },
-    { "03", "TRACK 03", 0xB0B0B0, 0.85f },
-    { "04", "TRACK 04", 0xE0E0E0, 0.85f },
-    { "05", "TRACK 05", 0xA8A8A8, 0.85f },
-    { "06", "TRACK 06", 0xD0D0D0, 0.85f },
-    { "07", "TRACK 07", 0x989898, 0.85f },
-    { "08", "TRACK 08", 0xF0F0F0, 0.85f },
-    { "09", "TRACK 09", 0xC0C0C0, 0.85f },
-    { "10", "TRACK 10", 0xA0A0A0, 0.85f },
-    { "11", "TRACK 11", 0xD8D8D8, 0.85f },
-};
-
 static const float LVL_GAIN[3] = { 0.0f, 0.72f, 1.0f };
 
 /* Master-effect delay lines. The delay is allocated on the heap so an Engine
@@ -79,6 +63,7 @@ void engine_init(Engine *e, int rate)
     e->bpm_x100 = 12000;
     e->length = N_STEPS;
     e->next_step = 0;
+    machine_init_engine(e);
 
     FxSettings fx;
     fx_defaults(&fx);
@@ -96,8 +81,8 @@ void engine_free(Engine *e)
     e->perf_fx = NULL;
 }
 
-/* Each track is limited to MAX_TRACK_VOICES. A third hit reuses the oldest
- * voice on that track, which keeps fast repeated hits from piling up. */
+/* A positive track_voice_limit caps repeated hits of one track. A limit of
+ * zero keeps the 808's global-oldest stealing. */
 static Voice *alloc_voice(Engine *e, int track)
 {
     int same = 0;
@@ -112,7 +97,8 @@ static Voice *alloc_voice(Engine *e, int track)
             oldest_same = v;
         }
     }
-    if (same >= MAX_TRACK_VOICES) return oldest_same;
+    if (e->track_voice_limit > 0 && same >= e->track_voice_limit)
+        return oldest_same;
 
     for (int i = 0; i < MAX_VOICES; i++)
         if (!e->voices[i].data) return &e->voices[i];
@@ -156,10 +142,23 @@ void engine_preview_data(Engine *e, int track, const float *data, int len,
 
 void engine_preview(Engine *e, int track, int variant, int rch, int lvl)
 {
-    (void)variant;
-    if (track >= 0 && track < N_TRACKS)
-        engine_preview_data(e, track, (const float *)e->sample_data[track],
-                            e->sample_len[track], rch, lvl);
+    if (track < 0 || track >= N_TRACKS) return;
+    int len = 0;
+    const float *data = machine_sample_for(e, track, variant, &len);
+    engine_preview_data(e, track, data, len, rch, lvl);
+}
+
+/* 808 kit selection: store the variant and resolve it to a sample pointer.
+ * The SMP uses sample paths instead and ignores this. */
+void engine_select_kit(Engine *e, int track, int variant)
+{
+    if (track < 0 || track >= N_TRACKS) return;
+    e->kit[track] = variant;
+    int len = 0;
+    const float *data = machine_sample_for(e, track, variant, &len);
+    e->sample_data[track] = data;
+    e->sample_len[track] = data ? len : 0;
+    e->sample_missing[track] = data ? 0 : 1;
 }
 
 void engine_kill_all_voices(Engine *e)

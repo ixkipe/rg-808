@@ -8,8 +8,8 @@
 #define RG808_SAMPLEBANK_H
 
 #include <stddef.h>
+#include "machine.h"
 
-#define SAMPLE_PATH_MAX   256
 #define SAMPLE_BANK_MAX   128
 #define SAMPLE_MAX_SECONDS 10
 #define SAMPLE_LIST_MAX   256

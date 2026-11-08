@@ -21,10 +21,6 @@ int song_save(const Song *s, const char *path);
  * on bad arguments. Missing bars become silent default snapshots. */
 int song_build_set(const Song *s, PatternLib *lib, SongSet *set);
 
-/* Resolve every sample path in the set against one bank. Returns the number of
- * missing/failed samples, or -2 when the set needs more slots than the bank. */
-int song_load_samples(SongSet *set, SampleBank *bank, const char *root);
-
 /* Frames for one pass through the chain plus a tail for the last hit. */
 long long song_total_frames(const SongSet *set, int rate, int tail_frames);
 

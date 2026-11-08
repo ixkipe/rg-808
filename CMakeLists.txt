@@ -4,17 +4,41 @@ project(rg808 C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-add_executable(rg808
-    src/main.c
-    src/engine.c
-    src/canvas.c
-    src/samplebank.c
-    src/wav.c
-    src/pattern.c
-    src/song.c
-    src/fx.c
-    src/perf_fx.c
+# Pick the machine definition at configure time. The shared core is identical;
+# only the machine file, sample provider and app shell differ.
+set(RG_MACHINE "808" CACHE STRING "Machine: 808 or smp")
+set_property(CACHE RG_MACHINE PROPERTY STRINGS 808 smp)
+
+set(CORE_SOURCES
+    src/core/engine.c
+    src/core/canvas.c
+    src/core/wav.c
+    src/core/pattern.c
+    src/core/song.c
+    src/core/fx.c
+    src/core/perf_fx.c
 )
+
+if (RG_MACHINE STREQUAL "808")
+    set(MACHINE_DIR "${CMAKE_SOURCE_DIR}/src/machines/808")
+    set(MACHINE_SOURCES
+        src/machines/808/samples.c
+        src/machines/808/machine.c
+        src/machines/808/main.c
+    )
+elseif (RG_MACHINE STREQUAL "smp")
+    set(MACHINE_DIR "${CMAKE_SOURCE_DIR}/src/machines/smp")
+    set(MACHINE_SOURCES
+        src/machines/smp/samplebank.c
+        src/machines/smp/machine.c
+        src/machines/smp/main.c
+    )
+else()
+    message(FATAL_ERROR "RG_MACHINE must be 808 or smp")
+endif()
+
+add_executable(rg808 ${CORE_SOURCES} ${MACHINE_SOURCES})
+target_include_directories(rg808 PRIVATE src/core ${MACHINE_DIR})
 
 if (WIN32)
     # MinGW dev libs vendored under vendor/sdl2 (see tools/fetch-deps.ps1)

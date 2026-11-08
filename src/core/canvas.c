@@ -1,7 +1,7 @@
 /* Canvas implementation + bitmap font rendering. */
 #include "canvas.h"
 /* Public-domain 8x8 font (Daniel Hepper, font8x8, CC0) — vendored verbatim: */
-#include "../vendor/font8x8_basic.h"
+#include "../../vendor/font8x8_basic.h"
 #include <string.h>
 
 void cv_fill(Canvas *c, Uint32 col)

@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #ifdef _WIN32
 #include <direct.h>
 #else
@@ -16,6 +17,7 @@
 #include "canvas.h"
 #include "wav.h"
 #include "samplebank.h"
+#include "smp_machine.h"
 #include "pattern.h"
 #include "song.h"
 #include "fx.h"
@@ -1085,7 +1087,7 @@ static void draw_ui(App *a)
     cv_fill(c, C_BG);
 
     /* header */
-    cv_text(c, 10, 8, "RG-SMP", 2, C_TEXT);
+    cv_text(c, 10, 8, machine_name(), 2, C_TEXT);
     char tbuf[40];
     const char *st = e->playing ? "PLAYING" : "STOPPED";
     cv_text(c, SCR_W - cv_text_w(st, 1) - 10, 10, st, 1, e->playing ? C_LED : C_TEXT_DIM);
@@ -1346,7 +1348,7 @@ static int render_init(App *a)
 {
     Uint32 flags = SDL_WINDOW_SHOWN;
     if (getenv("RG808_FULLSCREEN")) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-    a->win = SDL_CreateWindow("RG-SMP", 0, 0, SCR_W, SCR_H, flags);
+    a->win = SDL_CreateWindow(machine_window_title(), 0, 0, SCR_W, SCR_H, flags);
     if (!a->win) { SDL_Log("window: %s", SDL_GetError()); return -1; }
     a->ren = SDL_CreateRenderer(a->win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!a->ren) a->ren = SDL_CreateRenderer(a->win, -1, SDL_RENDERER_SOFTWARE);
@@ -3057,6 +3059,17 @@ static int test_length_run(App *a)
 /* Headless effects checks (`--test-fx`). */
 static void fx_test_pattern(Engine *e)
 {
+    static float test_sample[44100];
+    static int test_sample_ready = 0;
+    if (!test_sample_ready) {
+        for (int i = 0; i < 44100; i++)
+            test_sample[i] = 0.3f * sinf(6.2831853f * 440.0f * i / 44100.0f);
+        test_sample_ready = 1;
+    }
+    for (int t = 0; t < N_TRACKS; t++) {
+        e->sample_data[t] = test_sample;
+        e->sample_len[t] = 44100;
+    }
     for (int t = 0; t < N_TRACKS; t++)
         for (int s = 0; s < N_STEPS; s++)
             e->lvl[t][s] = 0;
@@ -3485,7 +3498,7 @@ static int test_mute_run(App *a)
     int track_voices = 0;
     for (int i = 0; i < MAX_VOICES; i++)
         if (e.voices[i].data && e.voices[i].track == 0) track_voices++;
-    CHECK(track_voices <= MAX_TRACK_VOICES, "a track keeps at most two voices");
+    CHECK(track_voices <= e.track_voice_limit, "a track keeps at most two voices");
     e.playing = 0;
     engine_free(&e);
 

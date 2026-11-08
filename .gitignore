@@ -1,4 +1,4 @@
-# RG-SMP build
+# RG-808 / RG-SMP build
 build/
 build-*/
 
@@ -6,9 +6,16 @@ build-*/
 vendor/sdl2/
 vendor/*.zip
 
-# user-provided sample packs; assets are local-only and shipped inside the port zip
-assets/
+# original sample pack stays untracked; the curated 808 kit under assets/wav is
+# tracked. Sampler/user packs live in the ignored subdirectories below.
 Roland TR-808/
+assets/smp/
+assets/wav/707
+assets/wav/808
+assets/wav/909
+assets/wav/LM1
+assets/wav/DMX
+assets/wav/E-MU
 
 # generated
 dist/
