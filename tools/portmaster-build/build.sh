@@ -4,8 +4,8 @@
 set -e
 cd /src
 
-SRCS="src/main.c src/engine.c src/canvas.c src/samplebank.c src/wav.c src/pattern.c src/song.c src/fx.c src/perf_fx.c"
-CFLAGS="-O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -I/usr/include/SDL2 -DNDEBUG"
+SRCS="src/core/engine.c src/core/canvas.c src/core/wav.c src/core/pattern.c src/core/song.c src/core/fx.c src/core/perf_fx.c src/machines/smp/samplebank.c src/machines/smp/machine.c src/machines/smp/main.c"
+CFLAGS="-O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Isrc/core -Isrc/machines/smp -I/usr/include/SDL2 -DNDEBUG"
 LIBS="-lSDL2 -lm"
 
 mkdir -p dist/rgsmp-staging

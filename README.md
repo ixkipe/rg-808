@@ -51,7 +51,7 @@ file and reloading the pattern brings the track back.
 
 ```
 tools\fetch-deps.ps1                  # one-time: SDL2 mingw + font
-cmake -S . -B build -G Ninja
+cmake -S . -B build -G Ninja -DRG_MACHINE=smp
 cmake --build build
 build\rg808.exe                       # local binary; UI/branding is RG-SMP
 ```

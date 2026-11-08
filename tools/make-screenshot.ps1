@@ -1,5 +1,9 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent $PSScriptRoot)
+if (-not (Test-Path build\CMakeCache.txt)) {
+  cmake -S . -B build -G Ninja -DRG_MACHINE=smp | Out-Null
+}
+cmake -S . -B build -DRG_MACHINE=smp | Out-Null
 cmake --build build | Out-Null
 if (-not (Test-Path build\assets\wav\909)) {
   cmake -E copy_directory assets build/assets
