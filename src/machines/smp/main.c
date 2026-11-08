@@ -121,6 +121,9 @@ typedef struct {
     StepUi step_ui;
 } App;
 
+static void handle_key(App *a, SDL_Keycode k);
+static void handle_key_up(App *a, SDL_Keycode k);
+
 static const char *DEMO[N_TRACKS] = {
     /*01*/ "2000200020002000",   /* kick: four on the floor */
     /*02*/ "0000000000000000",
@@ -2380,6 +2383,20 @@ static int test_levels_run(App *a)
           "release after hold does not cycle");
     step_ui_cancel(&ui);
 
+    /* Keyboard A tap must cycle, not wait for the hold timer. */
+    a->mode = MODE_EDIT;
+    a->cur_track = 0;
+    a->cur_step = 0;
+    a->punch_held = -1;
+    a->sh_held[SH_R1] = 0;
+    a->eng.lvl[0][0] = LVL_OFF;
+    step_ui_init(&a->step_ui);
+    handle_key(a, SDLK_z);
+    CHECK(a->step_ui.a_held == 1, "A press starts the hold timer");
+    handle_key_up(a, SDLK_z);
+    CHECK(a->step_ui.a_held == 0, "A release clears the hold timer");
+    CHECK(a->eng.lvl[0][0] == LVL_ON, "A tap cycles the step level");
+
     SDL_Quit();
     return fails ? 1 : 0;
 #undef CHECK
@@ -3825,7 +3842,8 @@ static void handle_key(App *a, SDL_Keycode k)
 static void handle_key_up(App *a, SDL_Keycode k)
 {
     int eff = punch_for_key(k);
-    if (eff >= 0) { punch_release_effect(a, eff); return; }
+    if (eff >= 0 && (punch_enabled(a) || a->punch_held >= 0))
+        punch_release_effect(a, eff);
 
     switch (k) {
     case SDLK_UP: case SDLK_w:
