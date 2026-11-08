@@ -512,6 +512,21 @@ int pattern_save_slot(PatternLib *lib, Engine *e, int slot)
     return save_index(lib);
 }
 
+/* Create a clean pattern in an empty slot. The current machine state (tempo,
+ * swing, length, FX, kit/sample assignments) is kept so the new slot is
+ * immediately playable; only notes and ratchets are cleared. */
+int pattern_create_clean(PatternLib *lib, Engine *e, int slot)
+{
+    if (!slot_valid(slot)) return -1;
+    Engine tmp = *e;
+    for (int t = 0; t < N_TRACKS; t++)
+        for (int s = 0; s < N_STEPS; s++) {
+            tmp.lvl[t][s] = 0;
+            tmp.rch[t][s] = 0;
+        }
+    return pattern_save_slot(lib, &tmp, slot);
+}
+
 int pattern_load_slot(PatternLib *lib, Engine *e, int slot)
 {
     if (!pattern_slot_exists(lib, slot)) return -1;
