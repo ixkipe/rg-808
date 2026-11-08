@@ -18,6 +18,7 @@
 #include "wav.h"
 #include "samplebank.h"
 #include "smp_machine.h"
+#include "step_ui.h"
 #include "pattern.h"
 #include "song.h"
 #include "fx.h"
@@ -50,7 +51,7 @@
 
 enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_SAMPLE, MODE_RCH, MODE_SWING,
             MODE_LENGTH, MODE_FX, MODE_PATTERN, MODE_PAT_ACT, MODE_RENAME,
-            MODE_SONG, MODE_SONG_ACT, MODE_EXPORT };
+            MODE_SONG, MODE_SONG_ACT, MODE_EXPORT, MODE_VOL };
 
 enum Action {
     ACT_NONE, ACT_UP, ACT_DOWN, ACT_LEFT, ACT_RIGHT,
@@ -117,6 +118,7 @@ typedef struct {
     SDL_AudioDeviceID dev;
     Uint32 *pixels;
     Canvas cv;
+    StepUi step_ui;
 } App;
 
 static const char *DEMO[N_TRACKS] = {
@@ -207,6 +209,19 @@ static void move_step(App *a, int dir)
     if (a->cur_step < 0 || a->cur_step >= len)
         a->cur_step = dir > 0 ? len - 1 : 0;
     a->cur_step = (a->cur_step + dir + len) % len;
+}
+
+/* A in the sequencer is a press/release pair: quick tap cycles the level,
+ * holding it opens the ghost/weak/regular/accent modal. */
+static void edit_a_down(App *a)
+{
+    step_ui_a_down(&a->step_ui, &a->eng, a->cur_track, a->cur_step,
+                   SDL_GetTicks());
+}
+
+static void edit_a_up(App *a)
+{
+    if (step_ui_a_up(&a->step_ui, &a->eng)) a->dirty = 1;
 }
 
 static void demo_pattern(App *a)
@@ -1213,6 +1228,8 @@ static void draw_ui(App *a)
                 unsigned char r = e->rch[t][s];
                 Uint32 fill = !in ? 0x111111
                             : lv == LVL_OFF ? 0x242424
+                            : lv == LVL_GHOST ? cv_dim(col, 0.10f)
+                            : lv == LVL_WEAK ? cv_dim(col, 0.32f)
                             : lv == LVL_ON  ? cv_dim(col, 0.80f)
                                             : C_LED;
                 cv_rect(c, x, y, CELL_W, CELL_H, fill);
@@ -1260,6 +1277,9 @@ static void draw_ui(App *a)
         draw_fx_page(a);
     } else if (a->mode == MODE_SAMPLE) {
         draw_sample_browser(a);
+    } else if (a->mode == MODE_VOL) {
+        step_ui_draw(&a->step_ui, &a->eng, &a->cv,
+                     C_PANEL, C_TEXT, C_TEXT_DIM, C_CURSOR);
     } else if (a->mode == MODE_EXPORT) {
         draw_export_progress(a);
     }
@@ -2287,11 +2307,93 @@ static int test_pattern_run(App *a)
 #undef CHECK
 }
 
+/* Headless checks for the four step levels and the hold-A modal. */
+static int test_levels_run(App *a)
+{
+    int fails = 0;
+    SDL_Init(SDL_INIT_TIMER);
+
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    if (engine_selftest_levels(48000) == 0)
+        printf("PASS: ghost/weak gain ordering\n");
+    else
+        fails++;
+
+    char path[1200];
+    snprintf(path, sizeof path, "%s/levels-test.txt", a->lib.conf_dir);
+    if (pattern_selftest_levels(path) == 0)
+        printf("PASS: ghost/weak persistence\n");
+    else
+        fails++;
+
+    for (int t = 0; t < N_TRACKS; t++)
+        for (int s = 0; s < N_STEPS; s++)
+            a->eng.lvl[t][s] = a->eng.rch[t][s] = 0;
+    a->eng.lvl[0][0] = LVL_ON;
+
+    StepUi ui;
+    step_ui_init(&ui);
+    step_ui_a_down(&ui, &a->eng, 0, 0, 1000);
+    CHECK(step_ui_tick(&ui, &a->eng, 0, 0, 1499) == 0,
+          "hold waits 500 ms");
+    CHECK(step_ui_tick(&ui, &a->eng, 0, 0, 1500) == 1,
+          "hold opens the level modal");
+    CHECK(ui.active == 1 && ui.sel == 2, "regular level is selected");
+    step_ui_move(&ui, &a->eng, 1);
+    CHECK(ui.sel == 3, "D-pad moves to accented");
+    CHECK(step_ui_confirm(&ui, &a->eng) == 1 && ui.active == 0,
+          "A confirms and closes the modal");
+    CHECK(a->eng.lvl[0][0] == LVL_ACC, "accented level is stored");
+
+    a->eng.lvl[0][0] = LVL_OFF;
+    step_ui_init(&ui);
+    step_ui_a_down(&ui, &a->eng, 0, 0, 2000);
+    CHECK(step_ui_a_up(&ui, &a->eng) == 1 &&
+          a->eng.lvl[0][0] == LVL_ON,
+          "quick tap cycles off to regular");
+    step_ui_a_down(&ui, &a->eng, 0, 0, 2100);
+    step_ui_a_up(&ui, &a->eng);
+    CHECK(a->eng.lvl[0][0] == LVL_ACC,
+          "quick tap cycles regular to accented");
+    step_ui_a_down(&ui, &a->eng, 0, 0, 2200);
+    step_ui_a_up(&ui, &a->eng);
+    CHECK(a->eng.lvl[0][0] == LVL_OFF,
+          "quick tap cycles accented to off");
+
+    a->eng.lvl[0][0] = LVL_GHOST;
+    step_ui_a_down(&ui, &a->eng, 0, 0, 2300);
+    step_ui_a_up(&ui, &a->eng);
+    CHECK(a->eng.lvl[0][0] == LVL_OFF,
+          "quick tap on ghost clears the step");
+
+    a->eng.lvl[0][0] = LVL_WEAK;
+    step_ui_init(&ui);
+    step_ui_a_down(&ui, &a->eng, 0, 0, 3000);
+    CHECK(step_ui_tick(&ui, &a->eng, 0, 0, 3500) == 1,
+          "second hold opens the modal");
+    CHECK(step_ui_a_up(&ui, &a->eng) == 0 &&
+          a->eng.lvl[0][0] == LVL_WEAK,
+          "release after hold does not cycle");
+    step_ui_cancel(&ui);
+
+    SDL_Quit();
+    return fails ? 1 : 0;
+#undef CHECK
+}
+
 static void act(App *a, int act)
 {
     Engine *e = &a->eng;
     switch (a->mode) {
     case MODE_EDIT:
+        if (act != ACT_CONFIRM) {
+            a->step_ui.a_held = 0;
+            a->step_ui.long_fired = 0;
+        }
         switch (act) {
         case ACT_UP:    a->cur_track = (a->cur_track + N_TRACKS - 1) % N_TRACKS; break;
         case ACT_DOWN:  a->cur_track = (a->cur_track + 1) % N_TRACKS; break;
@@ -2325,6 +2427,22 @@ static void act(App *a, int act)
         case ACT_MENU: a->mode = MODE_MENU; a->menu_sel = 0; break;
         case ACT_TEMPO_UP:   e->bpm_x100 += 500; if (e->bpm_x100 > 25000) e->bpm_x100 = 25000; a->dirty = 1; break;
         case ACT_TEMPO_DOWN: e->bpm_x100 -= 500; if (e->bpm_x100 < 400)  e->bpm_x100 = 400;  a->dirty = 1; break;
+        default: break;
+        }
+        break;
+    case MODE_VOL:
+        switch (act) {
+        case ACT_UP:   step_ui_move(&a->step_ui, e, -1); break;
+        case ACT_DOWN: step_ui_move(&a->step_ui, e, 1); break;
+        case ACT_CONFIRM:
+            if (step_ui_confirm(&a->step_ui, e)) a->dirty = 1;
+            a->mode = MODE_EDIT;
+            break;
+        case ACT_BACK:
+        case ACT_MENU:
+            step_ui_cancel(&a->step_ui);
+            a->mode = MODE_EDIT;
+            break;
         default: break;
         }
         break;
@@ -3683,7 +3801,10 @@ static void handle_key(App *a, SDL_Keycode k)
     case SDLK_DOWN: case SDLK_s:   input_dir(a, ACT_DOWN); break;
     case SDLK_LEFT: case SDLK_a:   input_dir(a, ACT_LEFT); break;
     case SDLK_RIGHT: case SDLK_d:  input_dir(a, ACT_RIGHT); break;
-    case SDLK_z: case SDLK_RETURN: act(a, ACT_CONFIRM); break;
+    case SDLK_z: case SDLK_RETURN:
+        if (a->mode == MODE_EDIT) edit_a_down(a);
+        else act(a, ACT_CONFIRM);
+        break;
     case SDLK_x:                   act(a, (a->mode == MODE_EDIT || a->mode == MODE_RCH) ? ACT_CLEAR : ACT_BACK); break;
     case SDLK_c:                   act(a, ACT_HEAR); break;
     case SDLK_y:                   act(a, ACT_MUTE); break;
@@ -3715,6 +3836,8 @@ static void handle_key_up(App *a, SDL_Keycode k)
         punch_release_effect(a, punch_for_dir(ACT_LEFT)); break;
     case SDLK_RIGHT: case SDLK_d:
         punch_release_effect(a, punch_for_dir(ACT_RIGHT)); break;
+    case SDLK_z: case SDLK_RETURN:
+        edit_a_up(a); break;
     case SDLK_1: handle_shoulder(a, SH_L1, 0); break;
     case SDLK_2: handle_shoulder(a, SH_L2, 0); break;
     case SDLK_3: handle_shoulder(a, SH_R1, 0); break;
@@ -3745,7 +3868,10 @@ static void handle_gc_button(App *a, int button, int down)
 
     if (down) {
         switch (button) {
-        case SDL_CONTROLLER_BUTTON_A: act(a, ACT_CONFIRM); break;
+        case SDL_CONTROLLER_BUTTON_A:
+            if (a->mode == MODE_EDIT) edit_a_down(a);
+            else act(a, ACT_CONFIRM);
+            break;
         case SDL_CONTROLLER_BUTTON_B: act(a, (a->mode == MODE_EDIT || a->mode == MODE_RCH) ? ACT_CLEAR : ACT_BACK); break;
         case SDL_CONTROLLER_BUTTON_X: act(a, ACT_HEAR); break;
         case SDL_CONTROLLER_BUTTON_Y: act(a, ACT_MUTE); break;
@@ -3766,6 +3892,9 @@ static void handle_gc_button(App *a, int button, int down)
         }
     } else {
         switch (button) {
+        case SDL_CONTROLLER_BUTTON_A:
+            edit_a_up(a);
+            break;
         case SDL_CONTROLLER_BUTTON_DPAD_UP: case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
         case SDL_CONTROLLER_BUTTON_DPAD_LEFT: case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
             if (held_dir == dir_action(button)) held_dir = 0;
@@ -3790,10 +3919,16 @@ static void handle_joy_button(App *a, int button, int down)
             return;
         }
     }
-    if (!down) return;
+    if (!down) {
+        if (button == 0) edit_a_up(a);
+        return;
+    }
 
     switch (button) {
-    case 0: act(a, ACT_CONFIRM); break;       /* A */
+    case 0:
+        if (a->mode == MODE_EDIT) edit_a_down(a);
+        else act(a, ACT_CONFIRM);
+        break;                               /* A */
     case 1: act(a, (a->mode == MODE_EDIT || a->mode == MODE_RCH) ? ACT_CLEAR : ACT_BACK); break;  /* B */
     case 2: act(a, ACT_HEAR); break;          /* X */
     case 3: act(a, ACT_MUTE); break;          /* Y */
@@ -4151,6 +4286,7 @@ int main(int argc, char **argv)
 {
     App a;
     memset(&a, 0, sizeof a);
+    step_ui_init(&a.step_ui);
     a.cur_track = 0; a.cur_step = 0; a.mode = MODE_EDIT; a.pat_sel = 1;
     a.sh_last = -1;
     a.punch_held = -1;
@@ -4173,6 +4309,7 @@ int main(int argc, char **argv)
     int test_sampler = 0;
     int test_pattern = 0;
     int test_swing = 0;
+    int test_levels = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -4195,11 +4332,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--test-sampler")) test_sampler = 1;
         else if (!strcmp(argv[i], "--test-pattern")) test_pattern = 1;
         else if (!strcmp(argv[i], "--test-swing")) test_swing = 1;
+        else if (!strcmp(argv[i], "--test-levels")) test_levels = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
-                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-sampler] [--test-pattern] [--test-swing]"
-                   " [--screenshot out.bmp [--mode edit|mute|punch|sampler|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|l1|l2|r1|r2]]\n");
+                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-sampler] [--test-pattern] [--test-swing] [--test-levels]"
+                   " [--screenshot out.bmp [--mode edit|mute|punch|sampler|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|vol|l1|l2|r1|r2]]\n");
             return 0;
         }
     }
@@ -4233,7 +4371,7 @@ int main(int argc, char **argv)
         return fails ? 1 : 0;
     }
 
-    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch || test_sampler || test_pattern) {
+    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch || test_sampler || test_pattern || test_levels) {
         resolve_conf(&a, base ? base : ".");
         if (!test_song && !test_length && !test_fx && !test_mute &&
             !test_punch && !test_sampler)
@@ -4250,6 +4388,7 @@ int main(int argc, char **argv)
         if (test_punch) return test_punch_run(&a);
         if (test_sampler) return test_sampler_run(&a);
         if (test_pattern) return test_pattern_run(&a);
+        if (test_levels) return test_levels_run(&a);
 
         if (save_slot_set) {
             engine_free(&a.eng);
@@ -4372,6 +4511,14 @@ int main(int argc, char **argv)
                 a.shortcut_until = SDL_GetTicks() + 60000;
             }
             else if (!strcmp(mode_arg, "sampler")) sample_browser_open(&a);
+            else if (!strcmp(mode_arg, "vol")) {
+                a.mode = MODE_VOL;
+                step_ui_init(&a.step_ui);
+                a.step_ui.active = 1;
+                a.step_ui.track = a.cur_track;
+                a.step_ui.step = a.cur_step;
+                a.step_ui.sel = 1;
+            }
             else if (!strcmp(mode_arg, "rch"))   a.mode = MODE_RCH;
             else if (!strcmp(mode_arg, "swing")) a.mode = MODE_SWING;
             else if (!strcmp(mode_arg, "length")) a.mode = MODE_LENGTH;
@@ -4472,6 +4619,9 @@ int main(int argc, char **argv)
         }
         /* d-pad hold repeat */
         Uint32 now = SDL_GetTicks();
+        if (a.mode == MODE_EDIT &&
+            step_ui_tick(&a.step_ui, &a.eng, a.cur_track, a.cur_step, now))
+            a.mode = MODE_VOL;
         if (held_dir && (int)(now - held_since) > 350 && (int)(now - last_auto) > 120) {
             last_auto = now;
             if (input_dir(&a, held_dir)) held_dir = 0;
