@@ -56,3 +56,20 @@ The machine branches keep their existing suites (`tools/test-*.ps1`). Core
 changes must pass the 808 suites and the SMP sampler suite. Bounce parity
 against the pre-split 808 build is the guard against machine assumptions
 creeping back into the core.
+
+Core-specific checks:
+
+- `--test-swing` / `tools/test-swing.ps1`: the grid LED follows the swung hit.
+- `--test-pattern` / `tools/test-pattern.ps1`: main-menu save writes only the
+  active slot; library SAVE HERE writes the cursor slot and switches to it;
+  selecting an empty slot creates a clean pattern and switches to it.
+
+## Pattern library behavior
+
+- Main menu **SAVE PATTERN** writes the editor to the active slot only.
+- Library **SAVE HERE** writes the editor to the cursor slot and makes it
+  active (save-as).
+- Selecting an empty slot creates a clean pattern in that slot: notes and
+  ratchets are cleared, but tempo, swing, length, FX, 808 kit variants and SMP
+  sample paths are kept. The new slot becomes active and the app returns to the
+  sequencer.
