@@ -19,8 +19,9 @@ sample model, look and brand name.
 ## Layout
 
 ```
-src/          C sources (engine, sample bank, audio, UI, persistence)
-assets/wav/   user-provided sample folders (not tracked by git)
+src/core/     shared engine, sequencer, patterns, songs, FX, punch-in FX
+src/machines/ machine definitions and app shells (808, smp)
+assets/wav/   tracked 808 kit; sampler/user packs live in ignored subdirs
 tools/        dev, test and packaging scripts
 port/         PortMaster packaging staging (RGSMP.sh, port.json, gameinfo)
 vendor/       SDL2 + public-domain font (fetched by tools/fetch-deps.ps1)
@@ -30,9 +31,9 @@ dist/         built port zip (generated)
 ## Samples
 
 WAVs live under `assets/wav/` and may be nested arbitrarily. The sample browser
-walks that tree on demand. `assets/wav` is intentionally ignored by git; put
-your packs there before building the port zip. The port zip includes whatever
-is present locally.
+walks that tree on demand. The tracked 808 kit is part of the shared tree;
+sampler/user packs live in ignored subdirectories (for example `assets/wav/909`)
+and are included in the port zip when present.
 
 Samples are loaded only when the active pattern or song needs them. A single
 sample is limited to 10 seconds. A song sample bank is limited to 128 unique

@@ -99,6 +99,7 @@ with a progress bar; the chain lives in `conf/song.txt`.
 docker build -t rg808build tools/portmaster-build
 docker run --rm -v "$PWD:/src" rg808build     # writes dist/rgsmp.zip
 ```
-Native dev builds (Windows MinGW / Linux) use the top-level CMakeLists.
-The `assets/wav` tree is intentionally not tracked by git; place your sample
-folders there before building the port zip.
+Native dev builds (Windows MinGW / Linux) use the top-level CMakeLists with
+`-DRG_MACHINE=smp`. The tracked 808 kit is part of the shared tree; place your
+sampler packs in an ignored subdirectory such as `assets/wav/909` before
+building the port zip.
