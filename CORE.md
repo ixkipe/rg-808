@@ -63,6 +63,26 @@ Core-specific checks:
 - `--test-pattern` / `tools/test-pattern.ps1`: main-menu save writes only the
   active slot; library SAVE HERE writes the cursor slot and switches to it;
   selecting an empty slot creates a clean pattern and switches to it.
+- `--test-levels` / `tools/test-levels.ps1`: ghost/weak/regular/accent gain
+  ordering, the VLV sidecar round-trip, and the hold-A modal state machine.
+
+## Step levels
+
+The sequencer has four audible step levels:
+
+| Level | Value | Gain |
+|---|---:|---:|
+| Ghost | 3 | 0.12 |
+| Weak | 4 | 0.40 |
+| Regular | 1 | 0.72 |
+| Accented | 2 | 1.00 |
+
+- A quick A tap keeps the old off -> regular -> accented cycle.
+- Holding A for 500 ms opens the level modal; D-pad selects, A confirms,
+  B cancels. The selection is auditioned as the cursor moves.
+- On disk the existing 16-digit line stays 0/1/2. A `VLV <label> <16 digits>`
+  sidecar carries the exact 0..4 values only for tracks that use ghost/weak.
+  Older builds ignore `VLV` and play those steps as regular.
 
 ## Pattern library behavior
 

@@ -17,6 +17,7 @@ set(CORE_SOURCES
     src/core/song.c
     src/core/fx.c
     src/core/perf_fx.c
+    src/core/step_ui.c
 )
 
 if (RG_MACHINE STREQUAL "808")
