@@ -13,6 +13,10 @@
 #define PERF_TAPE_LP_HZ   6000.0f
 #define PERF_PHONE_HZ     1200.0f
 #define PERF_PHONE_Q         2.5f
+/* A 0 dB-peak band-pass removes most of the drum energy, so the phone effect
+ * sounds far quieter than the dry mix. Make up the level inside the effect
+ * only; the global master gain and the other punch-ins stay untouched. */
+#define PERF_PHONE_MAKEUP    3.0f
 
 const char *const PUNCH_NAMES[PUNCH_COUNT] = {
     "1/4 LOOP", "1/8 LOOP", "1/16 LOOP", "1/32 LOOP",
@@ -106,13 +110,15 @@ PerfFxState *perf_fx_create(int rate)
     st->gate_coeff = 1.0f - expf(-1.0f / (rate * 0.001f));
     st->tape_lp_coeff = 1.0f - expf(-PERF_TWO_PI * PERF_TAPE_LP_HZ / rate);
 
-    /* RBJ band-pass, 0 dB peak gain, fixed centre for the "phone" effect. */
+    /* RBJ band-pass, 0 dB peak gain, fixed centre for the "phone" effect.
+     * Scale the feed-forward terms by the makeup gain so the peak is boosted
+     * without changing the filter shape or the global mix level. */
     float w0 = PERF_TWO_PI * PERF_PHONE_HZ / rate;
     float alpha = sinf(w0) / (2.0f * PERF_PHONE_Q);
     float a0 = 1.0f + alpha;
-    st->phone_b0 = alpha / a0;
+    st->phone_b0 = PERF_PHONE_MAKEUP * alpha / a0;
     st->phone_b1 = 0.0f;
-    st->phone_b2 = -alpha / a0;
+    st->phone_b2 = -PERF_PHONE_MAKEUP * alpha / a0;
     st->phone_a1 = -2.0f * cosf(w0) / a0;
     st->phone_a2 = (1.0f - alpha) / a0;
     return st;
@@ -493,6 +499,32 @@ int perf_fx_selftest(int rate)
     perf_fx_process(st, out, out_n, 12000, 0);
     ST_CHECK(fabsf(out[2 * (out_n - 1)]) < 0.05f,
              "phone filter rejects DC");
+    free(out);
+    perf_fx_destroy(st);
+
+    /* Phone makeup keeps the centre frequency audible instead of letting the
+     * band-pass drop the whole effect far below the dry mix. */
+    st = perf_fx_create(rate);
+    if (!st) return st_fail;
+    out_n = rate / 2;
+    out = calloc((size_t)out_n * 2, sizeof(float));
+    if (!out) { perf_fx_destroy(st); return st_fail; }
+    for (int i = 0; i < out_n; i++) {
+        float s = 0.1f * sinf((float)PERF_TWO_PI * PERF_PHONE_HZ * i / rate);
+        out[2 * i] = out[2 * i + 1] = s;
+    }
+    perf_fx_request(st, PUNCH_PHONE);
+    perf_fx_process(st, out, out_n, 12000, 0);
+    double phone_sum = 0.0;
+    float phone_peak = 0.0f;
+    for (int i = fade; i < out_n; i++) {
+        float v = out[2 * i];
+        phone_sum += (double)v * v;
+        if (fabsf(v) > phone_peak) phone_peak = fabsf(v);
+    }
+    float phone_rms = (float)sqrt(phone_sum / (out_n - fade));
+    ST_CHECK(phone_rms > 0.15f, "phone makeup keeps the centre frequency audible");
+    ST_CHECK(phone_peak < 1.0f, "phone makeup stays within range");
     free(out);
     perf_fx_destroy(st);
 
