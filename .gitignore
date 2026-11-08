@@ -1,4 +1,4 @@
-# RG-808 build
+# RG-808 / RG-SMP build
 build/
 build-*/
 
@@ -6,8 +6,10 @@ build-*/
 vendor/sdl2/
 vendor/*.zip
 
-# original sample pack stays untracked; curated kit under assets/ is tracked
+# original sample pack stays untracked; the curated 808 kit under assets/wav is
+# tracked. Sampler/user packs live in the ignored subdirectories below.
 Roland TR-808/
+assets/smp/
 assets/wav/707
 assets/wav/808
 assets/wav/909

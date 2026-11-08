@@ -3,10 +3,11 @@
 #ifndef RG808_ENGINE_H
 #define RG808_ENGINE_H
 
-#define N_TRACKS 11
+#include "machine.h"
+
 #define N_STEPS  16          /* maximum pattern length (and grid width) */
 #define MAX_VOICES 64
-#define MAX_VARIANTS 16
+#define MAX_TRACK_VOICES 8   /* ceiling for per-track voice limits */
 #define SONG_MAX_BARS 512
 
 /* Pattern length is 1..N_STEPS; clamp every value read from the UI or disk. */
@@ -64,7 +65,10 @@ typedef struct PatternSnapshot {
     FxSettings fx;             /* per-pattern effects chain */
     unsigned char lvl[N_TRACKS][N_STEPS];
     unsigned char rch[N_TRACKS][N_STEPS];
-    int kit[N_TRACKS];
+    int kit[N_TRACKS];               /* 808 variant index; unused by the SMP */
+    char sample_path[N_TRACKS][SAMPLE_PATH_MAX];
+    const float *sample[N_TRACKS];   /* resolved by the song sample bank */
+    int sample_len[N_TRACKS];
     int slot;                  /* source slot for display (0 = none) */
 } PatternSnapshot;
 
@@ -93,12 +97,18 @@ typedef struct Engine {
     volatile int length;                   /* 1..N_STEPS: live pattern length */
     volatile unsigned char lvl[N_TRACKS][N_STEPS];
     volatile unsigned char rch[N_TRACKS][N_STEPS];  /* per-step ratchet mode (RCH_*) */
-    volatile int kit[N_TRACKS];            /* selected sample variant per track (0-based) */
+    volatile int kit[N_TRACKS];            /* 808 selected variant (unused by SMP) */
+    char sample_path[N_TRACKS][SAMPLE_PATH_MAX];    /* assigned sample, UI thread */
+    volatile const float *sample_data[N_TRACKS];    /* decoded sample, audio thread */
+    volatile int sample_len[N_TRACKS];
+    volatile unsigned char sample_missing[N_TRACKS];
     volatile int preview_track;            /* 1-based track to fire, 0 = none (consumed by audio) */
-    volatile int preview_variant;          /* variant to audition */
+    volatile const float *preview_data;    /* sample for a browser audition */
+    volatile int preview_len;
     volatile int preview_rch;              /* ratchet mode to audition */
     volatile int preview_lvl;              /* level (gain) to audition */
     volatile int restart;                  /* set by UI on play to reset the step counter */
+    volatile int kill_all_voices;          /* consumed by audio: cut every voice */
 
     /* Performance mutes: UI -> audio. Not stored with patterns or song bars;
      * they persist across pattern changes and reset when the app starts.
@@ -130,25 +140,19 @@ typedef struct Engine {
     unsigned long long voice_fire[MAX_VOICES]; /* for stealing */
     struct FxState *fx_state;              /* heap-allocated effect buffers/state */
     struct PerfFxState *perf_fx;           /* heap-allocated punch-in FX state */
+    int track_voice_limit;                 /* 0 = global stealing; >0 = per-track cap */
     int rate;
     float master;
 } Engine;
 
-typedef struct TrackInfo {
-    const char *id;        /* sample family prefix, e.g. "bd" -> bd01.wav */
-    const char *label;     /* short grid label */
-    const char *name;      /* long name */
-    unsigned int color;    /* 0xRRGGBB */
-    float gain;            /* nominal level */
-    int dflt;              /* default variant (1-based) */
-} TrackInfo;
-
-extern const TrackInfo TRACKS[N_TRACKS];
-
 void engine_init(Engine *e, int rate);
 void engine_free(Engine *e);                      /* release effect buffers */
 void engine_fire_step(Engine *e, int step);       /* fire all notes at this step */
-void engine_preview(Engine *e, int track, int variant, int rch, int lvl); /* audition ASAP (X) */
+void engine_preview(Engine *e, int track, int variant, int rch, int lvl); /* audition track sample (X) */
+void engine_preview_data(Engine *e, int track, const float *data, int len,
+                         int rch, int lvl);       /* audition an arbitrary sample */
+void engine_select_kit(Engine *e, int track, int variant); /* 808: set + resolve variant */
+void engine_kill_all_voices(Engine *e);           /* cut all voices at the next callback */
 void engine_restart(Engine *e);                   /* restart clock from step 0 / start bar */
 void engine_mix(Engine *e, float *dst, int frames); /* advance clock + fill dst (stereo interleaved) */
 

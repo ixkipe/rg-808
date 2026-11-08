@@ -5,6 +5,8 @@
 
 #include "engine.h"
 
+#define MAX_VARIANTS 16
+
 int samples_load_all(const char *dir, int rate);        /* returns #tracks w/o samples */
 int variant_count(int track);                            /* 0..MAX_VARIANTS */
 const float *sample_get(int track, int variant, int *len); /* clamps variant; NULL if none */

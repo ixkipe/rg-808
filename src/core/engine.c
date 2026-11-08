@@ -1,25 +1,9 @@
 #include "engine.h"
 #include "fx.h"
 #include "perf_fx.h"
-#include "samples.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* Curated 808 kit families, mapped from the sample pack. Colors evoke the TR-808 panel. */
-const TrackInfo TRACKS[N_TRACKS] = {
-    { "bd", "BD", "BASS DRUM",  0xD94F3B, 1.00f,  7 },
-    { "sd", "SD", "SNARE",      0xE08A2E, 0.85f,  1 },
-    { "lt", "LT", "LOW TOM",    0xD8B62C, 0.80f,  1 },
-    { "mt", "MT", "MID TOM",    0x9CC832, 0.75f,  4 },
-    { "ht", "HT", "HIGH TOM",   0x3FA93C, 0.70f,  6 },
-    { "ch", "CH", "CLOSED HAT", 0x2FA3A0, 0.50f,  1 },
-    { "oh", "OH", "OPEN HAT",   0x3579C8, 0.50f,  1 },
-    { "cl", "CL", "CLAVE",      0x7A4FC0, 0.65f,  1 },
-    { "cp", "CP", "HAND CLAP",  0xC24F8A, 0.60f,  1 },
-    { "cb", "CB", "COWBELL",    0xB0A03C, 0.45f,  1 },
-    { "cy", "CY", "CYMBAL",     0x8A8F98, 0.40f,  6 },
-};
 
 static const float LVL_GAIN[3] = { 0.0f, 0.72f, 1.0f };
 
@@ -79,7 +63,7 @@ void engine_init(Engine *e, int rate)
     e->bpm_x100 = 12000;
     e->length = N_STEPS;
     e->next_step = 0;
-    for (int t = 0; t < N_TRACKS; t++) e->kit[t] = TRACKS[t].dflt - 1;
+    machine_init_engine(e);
 
     FxSettings fx;
     fx_defaults(&fx);
@@ -97,30 +81,45 @@ void engine_free(Engine *e)
     e->perf_fx = NULL;
 }
 
-/* Steal the oldest voice, preferring the same track. */
+/* A positive track_voice_limit caps repeated hits of one track. A limit of
+ * zero keeps the 808's global-oldest stealing. */
 static Voice *alloc_voice(Engine *e, int track)
 {
-    Voice *best = NULL;
-    unsigned long long oldest = ~0ull;
+    int same = 0;
+    Voice *oldest_same = NULL;
+    unsigned long long oldest_fire = ~0ull;
     for (int i = 0; i < MAX_VOICES; i++) {
         Voice *v = &e->voices[i];
-        if (!v->data) { best = v; break; }
-        if (v->track == track && e->voice_fire[i] < oldest) { oldest = e->voice_fire[i]; best = v; }
+        if (!v->data || v->track != track) continue;
+        same++;
+        if (e->voice_fire[i] < oldest_fire) {
+            oldest_fire = e->voice_fire[i];
+            oldest_same = v;
+        }
     }
-    if (!best) {                            /* global oldest */
-        oldest = ~0ull;
-        for (int i = 0; i < MAX_VOICES; i++)
-            if (e->voice_fire[i] < oldest) { oldest = e->voice_fire[i]; best = &e->voices[i]; }
-    }
+    if (e->track_voice_limit > 0 && same >= e->track_voice_limit)
+        return oldest_same;
+
+    for (int i = 0; i < MAX_VOICES; i++)
+        if (!e->voices[i].data) return &e->voices[i];
+
+    if (oldest_same) return oldest_same;
+    Voice *best = NULL;
+    oldest_fire = ~0ull;
+    for (int i = 0; i < MAX_VOICES; i++)
+        if (e->voice_fire[i] < oldest_fire) {
+            oldest_fire = e->voice_fire[i];
+            best = &e->voices[i];
+        }
     return best;
 }
 
-static void fire(Engine *e, int track, int variant, float level_gain, int delay)
+static void fire(Engine *e, int track, const float *data, int len,
+                 float level_gain, int delay)
 {
-    int len;
-    const float *data = sample_get(track, variant, &len);
-    if (!data) return;
+    if (!data || len <= 0) return;
     Voice *v = alloc_voice(e, track);
+    if (!v) return;
     v->data = data; v->len = len; v->pos = 0;
     v->delay = delay;
     v->gain = level_gain * TRACKS[track].gain;
@@ -128,15 +127,43 @@ static void fire(Engine *e, int track, int variant, float level_gain, int delay)
     e->voice_fire[v - e->voices] = e->total_pos;
 }
 
-/* Play one track now with a ratchet pattern (preview); consumed by audio callback. */
-void engine_preview(Engine *e, int track, int variant, int rch, int lvl)
+/* Play one track now with a ratchet pattern; consumed by audio callback. */
+void engine_preview_data(Engine *e, int track, const float *data, int len,
+                         int rch, int lvl)
 {
-    if (track >= 0 && track < N_TRACKS) {
-        e->preview_variant = variant;
+    if (track >= 0 && track < N_TRACKS && data && len > 0) {
+        e->preview_data = data;
+        e->preview_len = len;
         e->preview_rch = rch;
         e->preview_lvl = lvl;
         e->preview_track = track + 1;
     }
+}
+
+void engine_preview(Engine *e, int track, int variant, int rch, int lvl)
+{
+    if (track < 0 || track >= N_TRACKS) return;
+    int len = 0;
+    const float *data = machine_sample_for(e, track, variant, &len);
+    engine_preview_data(e, track, data, len, rch, lvl);
+}
+
+/* 808 kit selection: store the variant and resolve it to a sample pointer.
+ * The SMP uses sample paths instead and ignores this. */
+void engine_select_kit(Engine *e, int track, int variant)
+{
+    if (track < 0 || track >= N_TRACKS) return;
+    e->kit[track] = variant;
+    int len = 0;
+    const float *data = machine_sample_for(e, track, variant, &len);
+    e->sample_data[track] = data;
+    e->sample_len[track] = data ? len : 0;
+    e->sample_missing[track] = data ? 0 : 1;
+}
+
+void engine_kill_all_voices(Engine *e)
+{
+    if (e) e->kill_all_voices = 1;
 }
 
 void engine_punch_trigger(Engine *e, int effect)
@@ -162,24 +189,25 @@ int engine_punch_pending(const Engine *e)
 /* Schedule hit(s) for one voice: straight, ratchet roll (2/3/4 even subs) or
  * flam (quiet grace at the boundary, main ~14 ms later). Delays may exceed the
  * current buffer — voices carry their delay across callbacks. */
-static void fire_sched(Engine *e, int track, int variant, float gain, int delay, int rch, double sps)
+static void fire_sched(Engine *e, int track, const float *data, int len,
+                       float gain, int delay, int rch, double sps)
 {
     switch (rch) {
     case RCH_2:
-        for (int k = 0; k < 2; k++) fire(e, track, variant, gain, delay + (int)(k * sps / 2.0));
+        for (int k = 0; k < 2; k++) fire(e, track, data, len, gain, delay + (int)(k * sps / 2.0));
         return;
     case RCH_3:
-        for (int k = 0; k < 3; k++) fire(e, track, variant, gain, delay + (int)(k * sps / 3.0));
+        for (int k = 0; k < 3; k++) fire(e, track, data, len, gain, delay + (int)(k * sps / 3.0));
         return;
     case RCH_4:
-        for (int k = 0; k < 4; k++) fire(e, track, variant, gain, delay + (int)(k * sps / 4.0));
+        for (int k = 0; k < 4; k++) fire(e, track, data, len, gain, delay + (int)(k * sps / 4.0));
         return;
     case RCH_FLAM:
-        fire(e, track, variant, gain * 0.5f, delay);
-        fire(e, track, variant, gain, delay + (int)(0.014 * e->rate));
+        fire(e, track, data, len, gain * 0.5f, delay);
+        fire(e, track, data, len, gain, delay + (int)(0.014 * e->rate));
         return;
     default:
-        fire(e, track, variant, gain, delay);
+        fire(e, track, data, len, gain, delay);
         return;
     }
 }
@@ -214,7 +242,8 @@ void engine_fire_step(Engine *e, int step)
     for (int t = 0; t < N_TRACKS; t++) {
         unsigned char lv = e->lvl[t][step];
         if (lv > LVL_OFF && !e->mute[t])
-            fire_sched(e, t, e->kit[t], LVL_GAIN[lv], 0, e->rch[t][step], sps);
+            fire_sched(e, t, (const float *)e->sample_data[t], e->sample_len[t],
+                       LVL_GAIN[lv], 0, e->rch[t][step], sps);
     }
 }
 
@@ -293,8 +322,8 @@ static int mix_song_steps(Engine *e, int frames, int want_punch)
         for (int t = 0; t < N_TRACKS; t++) {
             unsigned char lv = sp->lvl[t][e->step];
             if (lv > LVL_OFF && !e->mute[t])
-                fire_sched(e, t, sp->kit[t], LVL_GAIN[lv], delay,
-                           sp->rch[t][e->step], sps);
+                fire_sched(e, t, sp->sample[t], sp->sample_len[t], LVL_GAIN[lv],
+                           delay, sp->rch[t][e->step], sps);
         }
         e->next_step += sps;
     }
@@ -531,6 +560,14 @@ void engine_mix(Engine *e, float *dst, int frames)
 {
     for (int f = 0; f < frames; f++) dst[2*f] = dst[2*f+1] = 0.0f;
 
+    if (e->kill_all_voices) {
+        e->kill_all_voices = 0;
+        for (int i = 0; i < MAX_VOICES; i++) {
+            e->voices[i].data = NULL;
+            e->voices[i].delay = 0;
+        }
+    }
+
     /* Muting a track should cut what is already ringing. The UI only sets
      * the mask; voice writes stay on the audio thread. */
     unsigned int kill = e->mute_kill_mask;
@@ -547,12 +584,14 @@ void engine_mix(Engine *e, float *dst, int frames)
 
     if (e->preview_track) {
         int t = e->preview_track - 1;
-        int v = e->preview_variant;
+        const float *data = (const float *)e->preview_data;
+        int len = e->preview_len;
         int r = e->preview_rch;
         int l = e->preview_lvl;
         e->preview_track = 0;
         if (t >= 0 && t < N_TRACKS)
-            fire_sched(e, t, v, LVL_GAIN[l == LVL_OFF ? LVL_ACC : l], 0, r, samples_per_step(e));
+            fire_sched(e, t, data, len, LVL_GAIN[l == LVL_OFF ? LVL_ACC : l],
+                       0, r, samples_per_step(e));
     }
 
     /* Cache the mode at buffer start: the UI may stop/start between callbacks,
@@ -581,8 +620,8 @@ void engine_mix(Engine *e, float *dst, int frames)
                 for (int t = 0; t < N_TRACKS; t++) {
                     unsigned char lv = e->lvl[t][e->step];
                     if (lv > LVL_OFF && !e->mute[t])
-                        fire_sched(e, t, e->kit[t], LVL_GAIN[lv], at,
-                                   e->rch[t][e->step], sps);
+                        fire_sched(e, t, (const float *)e->sample_data[t], e->sample_len[t],
+                                   LVL_GAIN[lv], at, e->rch[t][e->step], sps);
                 }
                 e->next_step += sps;
             }

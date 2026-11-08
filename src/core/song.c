@@ -1,4 +1,4 @@
-/* RG-808 song persistence and snapshot building. */
+/* RG-808/RG-SMP song persistence and snapshot building. */
 #include "song.h"
 
 #include <stdio.h>
@@ -68,6 +68,7 @@ int song_build_set(const Song *s, PatternLib *lib, SongSet *set)
             set->pat[i].slot = slot;
             missing++;
         }
+        machine_resolve_snapshot(&set->pat[i]);
     }
     return missing;
 }

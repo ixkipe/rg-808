@@ -1,11 +1,14 @@
-/* RG-808 — TR-808 clone main: app state, input, UI, persistence, CLI modes. */
+/* RG-SMP sampler main: app state, input, UI, persistence, CLI modes. */
 #include <SDL.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #ifdef _WIN32
 #include <direct.h>
+#else
+#include <unistd.h>
 #endif
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -13,7 +16,8 @@
 #include "engine.h"
 #include "canvas.h"
 #include "wav.h"
-#include "samples.h"
+#include "samplebank.h"
+#include "smp_machine.h"
 #include "pattern.h"
 #include "song.h"
 #include "fx.h"
@@ -44,7 +48,7 @@
 #define COL_PITCH (CELL_W + 4)          /* 34 */
 #define ROW_PITCH (CELL_H + 6)          /* 36 */
 
-enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_KIT, MODE_RCH, MODE_SWING,
+enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_SAMPLE, MODE_RCH, MODE_SWING,
             MODE_LENGTH, MODE_FX, MODE_PATTERN, MODE_PAT_ACT, MODE_RENAME,
             MODE_SONG, MODE_SONG_ACT, MODE_EXPORT };
 
@@ -61,6 +65,14 @@ enum { SH_L1, SH_L2, SH_R1, SH_R2, SH_COUNT };
 typedef struct {
     Engine eng;
     PatternLib lib;
+    SampleBank live_bank;
+    SampleBank song_bank;
+    SampleBank preview_bank;
+    char assets_root[1400];
+    char sample_dir[SAMPLE_PATH_MAX];
+    SampleDirEntry sample_list[SAMPLE_LIST_MAX];
+    int sample_count;
+    int sample_sel;
     int mode;
     int cur_track, cur_step;
     int menu_sel;
@@ -80,6 +92,8 @@ typedef struct {
     int edit_fx_valid;
     int song_sel;                     /* song editor cursor (0-based bar) */
     int song_act_sel;
+    int song_sample_missing;          /* samples that failed to load for the song */
+    int song_bank_error;              /* song bank exceeded its cap */
     int song_dirty;
     Uint32 song_last_save;
     char song_path[1200];
@@ -106,18 +120,57 @@ typedef struct {
 } App;
 
 static const char *DEMO[N_TRACKS] = {
-    /*bd*/ "2000200020002000",
-    /*sd*/ "0000100000001000",
-    /*lt*/ "0000000000000000",
-    /*mt*/ "0000000000000100",
-    /*ht*/ "0000000000000010",
-    /*ch*/ "1110111011101110",
-    /*oh*/ "0001000100010001",
-    /*cl*/ "0000000000000000",
-    /*cp*/ "0000100000001000",
-    /*cb*/ "0000001000000010",
-    /*cy*/ "0000000000000000",
+    /*01*/ "2000200020002000",   /* kick: four on the floor */
+    /*02*/ "0000000000000000",
+    /*03*/ "0000000000000000",
+    /*04*/ "0000000000000000",
+    /*05*/ "0000000000000000",
+    /*06*/ "0010001000100010",   /* closed hat: offbeats */
+    /*07*/ "0000000000000000",
+    /*08*/ "0000000000000000",
+    /*09*/ "0000000000000000",
+    /*10*/ "0000000000000000",
+    /*11*/ "0000000000000000",
 };
+
+/* Factory pattern for the first launch: the 909 groove from build/conf. */
+static const char DEFAULT_PATTERN[] =
+    "RGSMP1\n"
+    "BPM 130.00\n"
+    "SMP 01 909/TR-909Kick 02.wav\n"
+    "SMP 02 909/TR-909Snare 05.wav\n"
+    "SMP 03 909/TR-909Hat C 02.wav\n"
+    "SMP 04 909/TR-909Hat O 03.wav\n"
+    "SMP 05 909/TR-909Clap.wav\n"
+    "01 2000200020002000\n"
+    "02 0000200000002000\n"
+    "03 0010001000100000\n"
+    "04 0000000000000010\n"
+    "05 0000100000001000\n"
+    "06 0000000000000000\n"
+    "07 0000000000000000\n"
+    "08 0000000000000000\n"
+    "09 0000000000000000\n"
+    "10 0000000000000000\n"
+    "11 0000000000000000\n"
+    "RCH 01 0000000000000000\n"
+    "RCH 02 0000000000000000\n"
+    "RCH 03 0000000000000000\n"
+    "RCH 04 0000000000000000\n"
+    "RCH 05 0000000000000000\n"
+    "RCH 06 0000000000000000\n"
+    "RCH 07 0000000000000000\n"
+    "RCH 08 0000000000000000\n"
+    "RCH 09 0000000000000000\n"
+    "RCH 10 0000000000000000\n"
+    "RCH 11 0000000000000000\n"
+    "SWING 0\n"
+    "LEN 16\n"
+    "FX ON 0\n"
+    "FX DRIVE 1 2 4 12 60 60 40 4 40\n"
+    "FX MOD 0 0 180 70 75 50\n"
+    "FX DELAY 0 1 250 7 30 20\n"
+    "FX REVERB 1 70 40 20\n";
 
 /* ------------------------------------------------------------------ util */
 
@@ -129,6 +182,9 @@ static void set_msg(App *a, const char *fmt, ...)
     va_end(ap);
     a->msg_until = SDL_GetTicks() + 2500;
 }
+
+static void stop_playback(App *a);
+static void sampler_live_reload(App *a);
 
 /* ------------------------------------------------------------ persistence */
 
@@ -155,9 +211,14 @@ static void move_step(App *a, int dir)
 
 static void demo_pattern(App *a)
 {
-    for (int t = 0; t < N_TRACKS; t++)
+    for (int t = 0; t < N_TRACKS; t++) {
         for (int s = 0; s < N_STEPS; s++)
             a->eng.lvl[t][s] = (unsigned char)(DEMO[t][s] - '0');
+        a->eng.sample_path[t][0] = 0;
+        a->eng.sample_data[t] = NULL;
+        a->eng.sample_len[t] = 0;
+        a->eng.sample_missing[t] = 0;
+    }
 }
 
 /* Detect a directory (RG808_CONF may name a library dir or a legacy file). */
@@ -202,29 +263,35 @@ static void resolve_conf(App *a, const char *base)
         snprintf(conf, sizeof conf, "%sconf", (base && *base) ? base : "");
     }
 
-    /* A legacy file override is an explicit single-pattern sandbox: never
-     * migrate it and never treat its parent as a fresh v1 install. */
-    pattern_init(&a->lib, conf, !a->legacy_override);
-
-    /* Read-only card / failed migration: keep using the legacy file rather
-     * than falling back to the demo. */
-    if (!a->legacy_override) {
-        int any = 0;
-        for (int s = 0; s < PAT_MAX_SLOTS; s++)
-            if (a->lib.exists[s]) { any = 1; break; }
-        if (!any && !pattern_file_exists(a->lib.index_path)) {
-            char legacy[1200];
-            snprintf(legacy, sizeof legacy, "%s/pattern.txt", a->lib.conf_dir);
-            if (pattern_file_exists(legacy)) {
-                a->legacy_override = 1;
-                snprintf(a->conf_override, sizeof a->conf_override, "%s", legacy);
-            }
-        }
-    }
+    /* The sampler does not import the old 808 pattern.txt. An explicit
+     * RG808_CONF file override remains available for tooling/tests. */
+    pattern_init(&a->lib, conf, 0);
 
     snprintf(a->song_path, sizeof a->song_path, "%s/song.txt", a->lib.conf_dir);
     snprintf(a->song_wav_path, sizeof a->song_wav_path, "%s/song.wav", a->lib.conf_dir);
     snprintf(a->fx_path, sizeof a->fx_path, "%s/fx.txt", a->lib.conf_dir);
+}
+
+/* First launch only: install the factory 909 pattern into slot 001. The
+ * index file is the "library has been initialized" marker, so deleting every
+ * pattern later does not bring the factory pattern back. */
+static int install_default_pattern(App *a)
+{
+    if (a->legacy_override) return 0;
+    if (pattern_file_exists(a->lib.index_path)) return 0;
+    for (int s = 0; s < PAT_MAX_SLOTS; s++)
+        if (a->lib.exists[s]) return 0;
+
+    char path[1200];
+    snprintf(path, sizeof path, "%s/001.txt", a->lib.pat_dir);
+    if (pattern_write_atomic(path, DEFAULT_PATTERN, strlen(DEFAULT_PATTERN)) != 0)
+        return -1;
+
+    a->lib.exists[0] = 1;
+    a->lib.active_slot = 1;
+    snprintf(a->lib.name[0], PAT_NAME_LEN + 1, "DEFAULT");
+    pattern_set_active(&a->lib, 1);
+    return 1;
 }
 
 static int load_fx_settings(App *a)
@@ -250,7 +317,10 @@ static int load_current(App *a)
         rc = pattern_load_file(&a->eng, a->conf_override);
     else
         rc = pattern_load_slot(&a->lib, &a->eng, a->lib.active_slot);
-    if (rc == 0) clamp_cursor(a);
+    if (rc == 0) {
+        sampler_live_reload(a);
+        clamp_cursor(a);
+    }
     return rc;
 }
 
@@ -267,19 +337,21 @@ static int load_slot_into_editor(App *a, int slot)
     a->lib.active_slot = slot;
     pattern_set_active(&a->lib, slot);
     a->dirty = 0;
+    sampler_live_reload(a);
     clamp_cursor(a);
     return 0;
 }
 
 /* ------------------------------------------------------------------- ui */
 
-static const Uint32 C_BG        = 0x17171f;
-static const Uint32 C_PANEL     = 0x24242e;
-static const Uint32 C_TEXT      = 0xe8d8a8;
-static const Uint32 C_TEXT_DIM  = 0x8a8570;
+static const Uint32 C_BG        = 0x080808;
+static const Uint32 C_PANEL     = 0x1c1c1c;
+static const Uint32 C_TEXT      = 0xf0f0f0;
+static const Uint32 C_TEXT_DIM  = 0x888888;
 static const Uint32 C_CURSOR    = 0xffffff;
-static const Uint32 C_LED       = 0xff5040;
+static const Uint32 C_LED       = 0xe02020;
 static const Uint32 C_ACCENT    = 0xffffff;
+static const Uint32 C_WARN      = 0xe0c020;
 
 static const char RENAME_CHARS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_.";
 
@@ -302,7 +374,7 @@ static const char *shortcut_label(int sh, int ad)
     case SH_L2:
         if (ad == ACT_LEFT) return "PATTERN LIBRARY";
         if (ad == ACT_RIGHT) return "SONG MODE";
-        if (ad == ACT_UP) return "SAMPLE KIT";
+        if (ad == ACT_UP) return "SAMPLE BROWSER";
         break;
     case SH_R2:
         if (ad == ACT_UP) return "DRIVE FX";
@@ -451,6 +523,71 @@ static void draw_shortcut_overlay(App *a)
 
     cv_text(c, px + 16, py + ph - 18,
             "RELEASE THE SHOULDER TO CLOSE", 1, C_TEXT_DIM);
+}
+
+static void draw_sample_browser(App *a)
+{
+    Canvas *c = &a->cv;
+    int px = 16, py = 26, pw = 608, ph = 430;
+    cv_rect(c, px, py, pw, ph, C_PANEL);
+    cv_border(c, px, py, pw, ph, 2, C_TEXT);
+    cv_text(c, px + 12, py + 10, "SAMPLE BROWSER", 1, C_TEXT);
+
+    char buf[512];
+    if (a->sample_dir[0])
+        snprintf(buf, sizeof buf, "TRACK %s  /%s", TRACKS[a->cur_track].label, a->sample_dir);
+    else
+        snprintf(buf, sizeof buf, "TRACK %s  /", TRACKS[a->cur_track].label);
+    cv_text(c, px + 12, py + 26, buf, 1, C_TEXT_DIM);
+
+    int page = a->sample_sel / PAT_ROWS;
+    int first = page * PAT_ROWS;
+    int last = first + PAT_ROWS - 1;
+    if (last >= a->sample_count) last = a->sample_count - 1;
+    if (a->sample_count > 0)
+        snprintf(buf, sizeof buf, "%03d-%03d / %03d", first + 1, last + 1,
+                 a->sample_count);
+    else
+        snprintf(buf, sizeof buf, "000 / 000");
+    cv_text(c, px + pw - cv_text_w(buf, 1) - 12, py + 10, buf, 1, C_TEXT_DIM);
+
+    for (int i = 0; i < PAT_ROWS; i++) {
+        int idx = first + i;
+        if (idx >= a->sample_count) break;
+        SampleDirEntry *e = &a->sample_list[idx];
+        int ry = PAT_LIST_Y + i * PAT_ROW_H;
+        int sel = (idx == a->sample_sel);
+
+        if (sel)
+            cv_rect(c, PAT_LIST_X - 8, ry - 4, PAT_LIST_W, 26, cv_dim(C_TEXT, 0.18f));
+
+        char name[80];
+        snprintf(name, sizeof name, "%.*s", 60, e->name);
+        if (!strcmp(name, "..")) {
+            cv_text(c, PAT_LIST_X, ry, "[..]", 1, C_TEXT_DIM);
+            cv_text(c, PAT_LIST_X + 48, ry, "PARENT DIRECTORY", 1, C_TEXT_DIM);
+            continue;
+        }
+
+        int is_current = 0;
+        if (!e->is_dir) {
+            char rel[SAMPLE_PATH_MAX];
+            if (sampler_path_join(a->sample_dir, e->name, rel, sizeof rel) == 0)
+                is_current = !strcmp(rel, a->eng.sample_path[a->cur_track]);
+        }
+
+        if (e->is_dir) {
+            snprintf(buf, sizeof buf, "%s/", name);
+            cv_text(c, PAT_LIST_X, ry, buf, 1, sel ? C_CURSOR : C_TEXT);
+        } else {
+            cv_text(c, PAT_LIST_X, ry, name, 1, sel ? C_CURSOR : C_TEXT);
+            if (is_current)
+                cv_text(c, PAT_LIST_X + PAT_LIST_W - 40, ry, "SET", 1, C_LED);
+        }
+    }
+
+    if (a->sample_count == 0)
+        cv_text(c, px + 12, PAT_LIST_Y, "NO .WAV FILES OR DIRECTORIES", 1, C_TEXT_DIM);
 }
 
 static void draw_pattern_list(App *a, int with_actions)
@@ -950,7 +1087,7 @@ static void draw_ui(App *a)
     cv_fill(c, C_BG);
 
     /* header */
-    cv_text(c, 10, 8, "RG-808", 2, C_TEXT);
+    cv_text(c, 10, 8, machine_name(), 2, C_TEXT);
     char tbuf[40];
     const char *st = e->playing ? "PLAYING" : "STOPPED";
     cv_text(c, SCR_W - cv_text_w(st, 1) - 10, 10, st, 1, e->playing ? C_LED : C_TEXT_DIM);
@@ -1022,42 +1159,23 @@ static void draw_ui(App *a)
     /* track labels */
     for (int t = 0; t < N_TRACKS; t++) {
         int y = GRID_Y0 + t * ROW_PITCH + (CELL_H - 8) / 2;
-        int on_row = (a->mode == MODE_EDIT || a->mode == MODE_KIT || a->mode == MODE_RCH) && a->cur_track == t;
+        int on_row = (a->mode == MODE_EDIT || a->mode == MODE_SAMPLE ||
+                      a->mode == MODE_RCH) && a->cur_track == t;
         int muted = e->mute[t];
         cv_rect(c, 8, GRID_Y0 + t * ROW_PITCH, 4, CELL_H,
                 muted ? cv_dim(TRACKS[t].color, 0.30f) : TRACKS[t].color);
         cv_text(c, 22, y, TRACKS[t].label, 1,
                 muted ? cv_dim(TRACKS[t].color, 0.40f)
                       : (on_row ? TRACKS[t].color : C_TEXT_DIM));
-        if (variant_count(t) > 1) {                  /* current variant number */
-            snprintf(tbuf, sizeof tbuf, "%d", e->kit[t] + 1);
-            cv_text(c, 46, y, tbuf, 1, muted ? cv_dim(C_TEXT_DIM, 0.55f) : C_TEXT_DIM);
-        }
-        if (muted)                                   /* performance mute marker */
+        if (e->sample_missing[t])
+            cv_text(c, 52, y, "!", 1, C_WARN);
+        if (muted)
             cv_text(c, 64, y, "M", 1, C_LED);
     }
 
-    /* cells (edit) / variant picker (kit) / ratchet editor (rch) */
+    /* cells (edit) / ratchet editor (rch) */
     static const char RCH_CH[RCH_COUNT] = { ' ', '2', '3', '4', 'F' };
-    if (a->mode == MODE_KIT) {
-        for (int t = 0; t < N_TRACKS; t++) {
-            Uint32 col = TRACKS[t].color;
-            int cnt = variant_count(t);
-            for (int v = 0; v < cnt; v++) {
-                int x = GRID_X0 + v * COL_PITCH;
-                int y = GRID_Y0 + t * ROW_PITCH;
-                int sel = (e->kit[t] == v);
-                cv_rect(c, x, y, CELL_W, CELL_H, sel ? col : cv_dim(col, 0.20f));
-                if (sel)
-                    cv_border(c, x + 5, y + 5, CELL_W - 10, CELL_H - 10, 2, C_ACCENT);
-                if (t == a->cur_track) {              /* 1-based position in box */
-                    snprintf(tbuf, sizeof tbuf, "%d", v + 1);
-                    cv_text(c, x + (CELL_W - 8) / 2, y + (CELL_H - 8) / 2, tbuf, 1,
-                            sel ? 0x000000 : C_TEXT_DIM);
-                }
-            }
-        }
-    } else if (a->mode == MODE_RCH) {
+    if (a->mode == MODE_RCH) {
         for (int t = 0; t < N_TRACKS; t++) {
             Uint32 col = TRACKS[t].color;
             for (int s = 0; s < N_STEPS; s++) {
@@ -1066,58 +1184,56 @@ static void draw_ui(App *a)
                 int in = (s < pat_len);
                 unsigned char lv = e->lvl[t][s];
                 unsigned char r = e->rch[t][s];
-                Uint32 fill = !in ? cv_dim(col, 0.06f)
-                            : lv ? (r ? cv_dim(col, 0.55f) : cv_dim(col, 0.25f))
-                                 : cv_dim(col, 0.10f);
+                Uint32 fill = !in ? 0x111111
+                            : !lv ? 0x242424
+                                  : (r ? cv_dim(col, 0.45f) : cv_dim(col, 0.75f));
                 cv_rect(c, x, y, CELL_W, CELL_H, fill);
                 if (r) {
                     char dch[2] = { RCH_CH[r], 0 };
                     cv_text(c, x + (CELL_W - 8) / 2, y + (CELL_H - 8) / 2, dch, 1,
-                            !in ? cv_dim(C_TEXT_DIM, 0.55f) : (lv ? col : C_TEXT_DIM));
+                            !in ? cv_dim(C_TEXT_DIM, 0.55f) : (lv ? C_TEXT : C_TEXT_DIM));
                 }
                 if (in && s == led && e->playing)
                     cv_border(c, x, y, CELL_W, CELL_H, 2, C_LED);
             }
         }
     } else {
-    for (int t = 0; t < N_TRACKS; t++) {
-        Uint32 col = TRACKS[t].color;
-        for (int s = 0; s < N_STEPS; s++) {
-            int x = GRID_X0 + s * COL_PITCH;
-            int y = GRID_Y0 + t * ROW_PITCH;
-            int in = (s < pat_len);
-            unsigned char lv = e->lvl[t][s];
-            unsigned char r = e->rch[t][s];
-            Uint32 fill = !in ? cv_dim(col, 0.06f)
-                        : lv == LVL_OFF ? cv_dim(col, 0.20f)
-                        : lv == LVL_ON  ? cv_dim(col, 0.65f)
-                                        : col;
-            cv_rect(c, x, y, CELL_W, CELL_H, fill);
-            if (in && lv == LVL_ACC)
-                cv_border(c, x + 5, y + 5, CELL_W - 10, CELL_H - 10, 2, C_ACCENT);
-            if (in && lv > LVL_OFF && r > RCH_OFF) {
-                char dch[2] = { RCH_CH[r], 0 };
-                cv_text(c, x + (CELL_W - 8) / 2, y + CELL_H - 10, dch, 1,
-                        lv == LVL_ACC ? 0x000000u : C_TEXT);
+        for (int t = 0; t < N_TRACKS; t++) {
+            Uint32 col = TRACKS[t].color;
+            for (int s = 0; s < N_STEPS; s++) {
+                int x = GRID_X0 + s * COL_PITCH;
+                int y = GRID_Y0 + t * ROW_PITCH;
+                int in = (s < pat_len);
+                unsigned char lv = e->lvl[t][s];
+                unsigned char r = e->rch[t][s];
+                Uint32 fill = !in ? 0x111111
+                            : lv == LVL_OFF ? 0x242424
+                            : lv == LVL_ON  ? cv_dim(col, 0.80f)
+                                            : C_LED;
+                cv_rect(c, x, y, CELL_W, CELL_H, fill);
+                if (in && lv == LVL_ACC)
+                    cv_border(c, x + 5, y + 5, CELL_W - 10, CELL_H - 10, 2, C_ACCENT);
+                if (in && lv > LVL_OFF && r > RCH_OFF) {
+                    char dch[2] = { RCH_CH[r], 0 };
+                    cv_text(c, x + (CELL_W - 8) / 2, y + CELL_H - 10, dch, 1,
+                            lv == LVL_ACC ? 0x000000u : C_TEXT);
+                }
+                if (in && s == led && e->playing)
+                    cv_border(c, x, y, CELL_W, CELL_H, 2, C_LED);
             }
-            /* playing column highlight */
-            if (in && s == led && e->playing)
-                cv_border(c, x, y, CELL_W, CELL_H, 2, C_LED);
         }
-    }
     }
 
     /* end-of-pattern marker: steps past the pattern length stay visible but
      * dimmed, so shortening a pattern never destroys hidden notes */
-    if (a->mode != MODE_KIT && pat_len < N_STEPS) {
+    if (pat_len < N_STEPS) {
         int gx = GRID_X0 + pat_len * COL_PITCH - 3;
         int gy = GRID_Y0 + (N_TRACKS - 1) * ROW_PITCH + CELL_H;
         cv_rect(c, gx, 50, 2, gy - 50, C_TEXT_DIM);
     }
 
     /* cursor */
-    if (a->mode == MODE_KIT ||
-        ((a->mode == MODE_EDIT || a->mode == MODE_RCH) && a->cur_step < pat_len)) {
+    if ((a->mode == MODE_EDIT || a->mode == MODE_RCH) && a->cur_step < pat_len) {
         int x = GRID_X0 + a->cur_step * COL_PITCH;
         int y = GRID_Y0 + a->cur_track * ROW_PITCH;
         cv_border(c, x - 2, y - 2, CELL_W + 4, CELL_H + 4, 2, C_CURSOR);
@@ -1137,21 +1253,18 @@ static void draw_ui(App *a)
         draw_song_list(a, 1);
     } else if (a->mode == MODE_FX) {
         draw_fx_page(a);
+    } else if (a->mode == MODE_SAMPLE) {
+        draw_sample_browser(a);
     } else if (a->mode == MODE_EXPORT) {
         draw_export_progress(a);
     }
 
     /* status / menu / hints */
     Uint32 now = SDL_GetTicks();
-    if (a->mode == MODE_KIT) {
-        snprintf(tbuf, sizeof tbuf, "KIT: %s = %02d/%02d  %s", TRACKS[a->cur_track].label,
-                 e->kit[a->cur_track] + 1, variant_count(a->cur_track), TRACKS[a->cur_track].name);
-        cv_text(c, 10, 10 + 18, tbuf, 1, C_TEXT_DIM);
-    }
     if (a->msg[0] && (int)(now - a->msg_until) < 0)
         cv_text(c, 10, SCR_H - 14, a->msg, 1, C_TEXT);
-    else if (a->mode == MODE_KIT)
-        cv_text(c, 10, SCR_H - 14, "A:SELECT+HEAR  X:HEAR  B:BACK  START:PLAY", 1, C_TEXT_DIM);
+    else if (a->mode == MODE_SAMPLE)
+        cv_text(c, 10, SCR_H - 14, "A:SELECT/ENTER  X:HEAR  DPAD:SCROLL  LR:PAGE  B:BACK", 1, C_TEXT_DIM);
     else if (a->mode == MODE_RCH)
         cv_text(c, 10, SCR_H - 14, "A:ROLL 2/3/4/F  X:HEAR  B:CLEAR ROLL  SELECT:BACK", 1, C_TEXT_DIM);
     else if (a->mode == MODE_PATTERN) {
@@ -1182,7 +1295,7 @@ static void draw_ui(App *a)
     if (a->mode == MODE_MENU) {
         static const char *items[MENU_N] = {
             "EDIT TEMPO", "EDIT SWING", "PATTERN LENGTH", "RATCHET NOTES",
-            "SELECT KITS", "SAVE PATTERN", "PATTERN LIBRARY", "SONG MODE",
+            "SAMPLE BROWSER", "SAVE PATTERN", "PATTERN LIBRARY", "SONG MODE",
             "EFFECTS", "CLEAR ALL", "QUIT"
         };
         int n = MENU_N;
@@ -1235,7 +1348,7 @@ static int render_init(App *a)
 {
     Uint32 flags = SDL_WINDOW_SHOWN;
     if (getenv("RG808_FULLSCREEN")) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-    a->win = SDL_CreateWindow("RG-808", 0, 0, SCR_W, SCR_H, flags);
+    a->win = SDL_CreateWindow(machine_window_title(), 0, 0, SCR_W, SCR_H, flags);
     if (!a->win) { SDL_Log("window: %s", SDL_GetError()); return -1; }
     a->ren = SDL_CreateRenderer(a->win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!a->ren) a->ren = SDL_CreateRenderer(a->win, -1, SDL_RENDERER_SOFTWARE);
@@ -1267,6 +1380,191 @@ static void stop_playback(App *a)
     }
 }
 
+/* Wait for one audio callback after killing voices so a sample bank can be
+ * freed without the audio thread still pointing into it. */
+static void sampler_wait_callback(App *a)
+{
+    if (!a->dev) return;
+    unsigned int before = a->eng.mix_count;
+    Uint32 deadline = SDL_GetTicks() + 100;
+    while (a->eng.mix_count == before && (int)(SDL_GetTicks() - deadline) < 0)
+        SDL_Delay(1);
+}
+
+static void sampler_live_reload(App *a)
+{
+    stop_playback(a);
+    engine_kill_all_voices(&a->eng);
+    sampler_wait_callback(a);
+
+    samplebank_clear(&a->live_bank);
+    for (int t = 0; t < N_TRACKS; t++) {
+        Engine *e = &a->eng;
+        e->sample_data[t] = NULL;
+        e->sample_len[t] = 0;
+        e->sample_missing[t] = 0;
+        if (!e->sample_path[t][0]) continue;
+
+        int idx = samplebank_load(&a->live_bank, a->assets_root, e->sample_path[t]);
+        if (idx < 0) {
+            e->sample_missing[t] = 1;
+            continue;
+        }
+        int len = 0;
+        e->sample_data[t] = samplebank_data(&a->live_bank, idx, &len);
+        e->sample_len[t] = len;
+    }
+}
+
+static void sampler_preview_path(App *a, const char *rel)
+{
+    int idx = samplebank_load(&a->preview_bank, a->assets_root, rel);
+    if (idx < 0) { set_msg(a, "SAMPLE LOAD FAILED"); return; }
+    int len = 0;
+    const float *data = samplebank_data(&a->preview_bank, idx, &len);
+    engine_preview_data(&a->eng, a->cur_track, data, len, RCH_OFF, LVL_ACC);
+}
+
+static void sample_browser_refresh(App *a)
+{
+    a->sample_count = sampler_list_dir(a->assets_root, a->sample_dir,
+                                       a->sample_list, SAMPLE_LIST_MAX);
+    if (a->sample_count < 0) a->sample_count = 0;
+    if (a->sample_sel >= a->sample_count) a->sample_sel = a->sample_count - 1;
+    if (a->sample_sel < 0) a->sample_sel = 0;
+}
+
+static void sample_browser_open(App *a)
+{
+    sample_browser_refresh(a);
+    a->sample_sel = 0;
+
+    /* Select the current track's sample if it is visible in this directory. */
+    const char *path = a->eng.sample_path[a->cur_track];
+    size_t dlen = strlen(a->sample_dir);
+    const char *name = path;
+    if (dlen && !strncmp(path, a->sample_dir, dlen) && path[dlen] == '/')
+        name = path + dlen + 1;
+    if (strchr(name, '/') == NULL) {
+        for (int i = 0; i < a->sample_count; i++)
+            if (!a->sample_list[i].is_dir && !strcmp(a->sample_list[i].name, name)) {
+                a->sample_sel = i;
+                break;
+            }
+    }
+    a->mode = MODE_SAMPLE;
+}
+
+static void sample_browser_preview(App *a)
+{
+    if (a->sample_count <= 0) return;
+    SampleDirEntry *e = &a->sample_list[a->sample_sel];
+    if (e->is_dir) return;
+    char rel[SAMPLE_PATH_MAX];
+    if (sampler_path_join(a->sample_dir, e->name, rel, sizeof rel) == 0)
+        sampler_preview_path(a, rel);
+}
+
+static void sampler_lower(char *dst, size_t cap, const char *src)
+{
+    size_t n = 0;
+    for (; src && *src && n + 1 < cap; src++) {
+        char c = *src;
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        dst[n++] = c;
+    }
+    dst[n] = 0;
+}
+
+/* First-run convenience: try to map the TR-909 folder to the 11 slots by
+ * instrument name. Anything not matched is left empty or filled in sorted
+ * order, and the user can always browse manually. */
+static void sampler_default_assign(App *a)
+{
+    static char paths[SAMPLE_BANK_MAX][SAMPLE_PATH_MAX];
+    int count = 0;
+    sampler_collect_wavs(a->assets_root, "909", paths, SAMPLE_BANK_MAX, &count);
+    if (count <= 0)
+        sampler_collect_wavs(a->assets_root, "TR-909", paths, SAMPLE_BANK_MAX, &count);
+    if (count <= 0) return;
+
+    static const char *keys[N_TRACKS][5] = {
+        { "kick", "bassdrum", "bass drum", "bd", NULL },
+        { "snare", "sd", NULL, NULL, NULL },
+        { "tom low", "lowtom", "low tom", "lt", NULL },
+        { "tom mid", "midtom", "mid tom", "mt", NULL },
+        { "tom hi", "hightom", "high tom", "ht", NULL },
+        { "hat c", "closed", "ch", NULL, NULL },
+        { "hat o", "open", "oh", NULL, NULL },
+        { "crash", "cr", NULL, NULL, NULL },
+        { "ride", "rd", NULL, NULL, NULL },
+        { "clap", "cp", NULL, NULL, NULL },
+        { "rim", "rs", NULL, NULL, NULL },
+    };
+
+    char lower[SAMPLE_BANK_MAX][SAMPLE_PATH_MAX];
+    int used[SAMPLE_BANK_MAX] = { 0 };
+    for (int i = 0; i < count; i++) sampler_lower(lower[i], sizeof lower[i], paths[i]);
+
+    for (int t = 0; t < N_TRACKS; t++) {
+        for (int k = 0; k < 5 && keys[t][k]; k++) {
+            for (int i = 0; i < count; i++) {
+                if (used[i] || !strstr(lower[i], keys[t][k])) continue;
+                snprintf(a->eng.sample_path[t], sizeof a->eng.sample_path[t],
+                         "%s", paths[i]);
+                used[i] = 1;
+                k = 5;
+                break;
+            }
+        }
+    }
+
+    int next = 0;
+    for (int t = 0; t < N_TRACKS; t++) {
+        if (a->eng.sample_path[t][0]) continue;
+        while (next < count && used[next]) next++;
+        if (next >= count) break;
+        snprintf(a->eng.sample_path[t], sizeof a->eng.sample_path[t],
+                 "%s", paths[next]);
+        used[next] = 1;
+    }
+}
+
+static void sample_browser_enter(App *a)
+{
+    if (a->sample_count <= 0) return;
+    SampleDirEntry *e = &a->sample_list[a->sample_sel];
+
+    if (!strcmp(e->name, "..")) {
+        char parent[SAMPLE_PATH_MAX];
+        sampler_parent_dir(a->sample_dir, parent, sizeof parent);
+        snprintf(a->sample_dir, sizeof a->sample_dir, "%s", parent);
+        sample_browser_refresh(a);
+        a->sample_sel = 0;
+        return;
+    }
+
+    char rel[SAMPLE_PATH_MAX];
+    if (sampler_path_join(a->sample_dir, e->name, rel, sizeof rel) != 0) return;
+
+    if (e->is_dir) {
+        snprintf(a->sample_dir, sizeof a->sample_dir, "%s", rel);
+        sample_browser_refresh(a);
+        a->sample_sel = 0;
+        return;
+    }
+
+    snprintf(a->eng.sample_path[a->cur_track],
+             sizeof a->eng.sample_path[a->cur_track], "%s", rel);
+    a->dirty = 1;
+    sampler_live_reload(a);
+    if (a->eng.sample_missing[a->cur_track]) set_msg(a, "SAMPLE MISSING");
+    else {
+        set_msg(a, "SAMPLE %s", e->name);
+        engine_preview(&a->eng, a->cur_track, 0, RCH_OFF, LVL_ACC);
+    }
+}
+
 static void toggle_edit_play(App *a)
 {
     if (a->eng.song_playing) stop_playback(a);
@@ -1279,22 +1577,27 @@ static void toggle_edit_play(App *a)
 static SongSet *song_prepare(App *a, int *missing_out)
 {
     if (missing_out) *missing_out = 0;
+    a->song_sample_missing = 0;
+    a->song_bank_error = 0;
     if (!a->song_sets[0] || !a->song_sets[1]) return NULL;
     stop_playback(a);
-
-    /* Wait for one audio callback to finish after stopping, so the buffer we
-     * are about to overwrite is no longer being read by the audio thread. */
-    if (a->dev) {
-        unsigned int before = a->eng.mix_count;
-        Uint32 deadline = SDL_GetTicks() + 100;
-        while (a->eng.mix_count == before && (int)(SDL_GetTicks() - deadline) < 0)
-            SDL_Delay(1);
-    }
+    engine_kill_all_voices(&a->eng);
+    sampler_wait_callback(a);
+    samplebank_clear(&a->song_bank);
 
     int idx = 1 - a->song_set_active;
     SongSet *set = a->song_sets[idx];
     int missing = song_build_set(&a->song, &a->lib, set);
     if (missing < 0) return NULL;
+
+    int smissed = song_load_samples(set, &a->song_bank, a->assets_root);
+    if (smissed == -2) {
+        a->song_bank_error = 1;
+        set_msg(a, "SONG SAMPLE SET TOO LARGE");
+        return NULL;
+    }
+    a->song_sample_missing = smissed > 0 ? smissed : 0;
+
     a->song_set_active = idx;
     a->eng.song_set = set;
     if (missing_out) *missing_out = missing;
@@ -1306,14 +1609,19 @@ static void song_play(App *a, int from_bar)
     if (a->song.count <= 0) { set_msg(a, "SONG EMPTY"); return; }
     int missing = 0;
     SongSet *set = song_prepare(a, &missing);
-    if (!set || set->count <= 0) { set_msg(a, "SONG BUILD FAILED"); return; }
+    if (!set || set->count <= 0) {
+        if (a->song_bank_error) set_msg(a, "SONG SAMPLE SET TOO LARGE");
+        else set_msg(a, "SONG BUILD FAILED");
+        return;
+    }
     if (from_bar < 0) from_bar = 0;
     if (from_bar >= set->count) from_bar = set->count - 1;
     a->song_sel = from_bar;
     fx_capture(&a->edit_fx, &a->eng);   /* restore after the song stops */
     a->edit_fx_valid = 1;
     engine_song_start(&a->eng, set, a->song.loop, from_bar);
-    if (missing > 0) set_msg(a, "PLAYING (%d EMPTY BARS)", missing);
+    if (missing > 0 || a->song_sample_missing > 0)
+        set_msg(a, "PLAYING (SOME DATA MISSING)");
     else set_msg(a, "PLAYING SONG");
 }
 
@@ -1504,7 +1812,12 @@ static void song_export_ui(App *a)
     if (a->song.count <= 0) { set_msg(a, "SONG EMPTY"); a->mode = MODE_SONG; return; }
     int missing = 0;
     SongSet *set = song_prepare(a, &missing);
-    if (!set) { set_msg(a, "EXPORT FAILED"); a->mode = MODE_SONG; return; }
+    if (!set) {
+        if (a->song_bank_error) set_msg(a, "EXPORT FAILED - SAMPLES TOO LARGE");
+        else set_msg(a, "EXPORT FAILED");
+        a->mode = MODE_SONG;
+        return;
+    }
 
     a->mode = MODE_EXPORT;
     a->export_progress = 0;
@@ -1512,7 +1825,8 @@ static void song_export_ui(App *a)
     int rc = render_song_wav(a, set, a->song_wav_path, 1);
     a->mode = MODE_SONG;
     if (rc != 0) set_msg(a, "EXPORT FAILED");
-    else if (missing > 0) set_msg(a, "EXPORTED (%d EMPTY BARS)", missing);
+    else if (missing > 0 || a->song_sample_missing > 0)
+        set_msg(a, "EXPORTED (SOME DATA MISSING)");
     else set_msg(a, "EXPORTED conf/song.wav");
 }
 
@@ -1762,8 +2076,7 @@ static void do_menu(App *a, int item)
     case 2: a->mode = MODE_LENGTH; clamp_cursor(a); break;
     case 3: a->mode = MODE_RCH; break;
     case 4:
-        a->mode = MODE_KIT;
-        a->cur_step = a->eng.kit[a->cur_track];   /* land cursor on current pick */
+        sample_browser_open(a);
         break;
     case 5:
         if (save_current(a) == 0) set_msg(a, "SAVED P%03d", a->lib.active_slot);
@@ -1895,13 +2208,13 @@ static void act(App *a, int act)
             unsigned char lv = (unsigned char)((e->lvl[a->cur_track][a->cur_step] + 1) % 3);
             e->lvl[a->cur_track][a->cur_step] = lv;
             a->dirty = 1;
-            if (lv) engine_preview(e, a->cur_track, e->kit[a->cur_track],
+            if (lv) engine_preview(e, a->cur_track, 0,
                                    e->rch[a->cur_track][a->cur_step], lv);
             break;
         }
         case ACT_CLEAR: e->lvl[a->cur_track][a->cur_step] = LVL_OFF; a->dirty = 1; break;
         case ACT_HEAR:
-            engine_preview(e, a->cur_track, e->kit[a->cur_track],
+            engine_preview(e, a->cur_track, 0,
                            e->rch[a->cur_track][a->cur_step], LVL_ON);
             break;
         case ACT_MUTE: {
@@ -1932,31 +2245,31 @@ static void act(App *a, int act)
         default: break;
         }
         break;
-    case MODE_KIT: {
-        int t = a->cur_track;
-        int cnt = variant_count(t);
+    case MODE_SAMPLE:
         switch (act) {
         case ACT_UP:
-            a->cur_track = (t + N_TRACKS - 1) % N_TRACKS;
-            a->cur_step = e->kit[a->cur_track];
+            if (a->sample_count > 0)
+                a->sample_sel = (a->sample_sel + a->sample_count - 1) % a->sample_count;
             break;
         case ACT_DOWN:
-            a->cur_track = (t + 1) % N_TRACKS;
-            a->cur_step = e->kit[a->cur_track];
+            if (a->sample_count > 0)
+                a->sample_sel = (a->sample_sel + 1) % a->sample_count;
             break;
         case ACT_LEFT:
-            if (cnt > 0) a->cur_step = (a->cur_step + cnt - 1) % cnt;
+            a->sample_sel -= PAT_ROWS;
+            if (a->sample_sel < 0) a->sample_sel = 0;
             break;
         case ACT_RIGHT:
-            if (cnt > 0) a->cur_step = (a->cur_step + 1) % cnt;
+            a->sample_sel += PAT_ROWS;
+            if (a->sample_sel >= a->sample_count)
+                a->sample_sel = a->sample_count > 0 ? a->sample_count - 1 : 0;
             break;
         case ACT_CONFIRM:
-            if (cnt > 0) { e->kit[t] = a->cur_step; a->dirty = 1; }
-            engine_preview(e, t, a->cur_step, RCH_OFF, LVL_ACC);
+            sample_browser_enter(a);
             break;
         case ACT_HEAR:
         case ACT_MUTE:
-            engine_preview(e, t, a->cur_step, RCH_OFF, LVL_ACC);
+            sample_browser_preview(a);
             break;
         case ACT_PLAY:
             toggle_edit_play(a);
@@ -1964,12 +2277,11 @@ static void act(App *a, int act)
         case ACT_BACK:
         case ACT_MENU:
             a->mode = MODE_EDIT;
-            clamp_cursor(a);          /* variant index may exceed the new length */
+            clamp_cursor(a);
             break;
         default: break;
         }
         break;
-    }
     case MODE_TEMPO: {
         Engine *en = &a->eng;
         switch (act) {
@@ -2075,7 +2387,7 @@ static void act(App *a, int act)
             unsigned char r = (unsigned char)((e->rch[t][a->cur_step] + 1) % RCH_COUNT);
             e->rch[t][a->cur_step] = r;
             a->dirty = 1;
-            engine_preview(e, t, e->kit[t], r,
+            engine_preview(e, t, 0, r,
                            e->lvl[t][a->cur_step] ? e->lvl[t][a->cur_step] : LVL_ON);
             break;
         }
@@ -2084,7 +2396,7 @@ static void act(App *a, int act)
             break;
         case ACT_HEAR:
         case ACT_MUTE:
-            engine_preview(e, t, e->kit[t], e->rch[t][a->cur_step],
+            engine_preview(e, t, 0, e->rch[t][a->cur_step],
                            e->lvl[t][a->cur_step] ? e->lvl[t][a->cur_step] : LVL_ON);
             break;
         case ACT_PLAY:
@@ -2417,8 +2729,7 @@ static int shortcut_activate(App *a, int sh, int ad)
             return 1;
         }
         if (ad == ACT_UP) {
-            a->mode = MODE_KIT;
-            a->cur_step = a->eng.kit[a->cur_track];
+            sample_browser_open(a);
             return 1;
         }
         break;
@@ -2531,7 +2842,7 @@ static int test_shortcuts_run(App *a)
     a->mode = MODE_EDIT;
     handle_shoulder(a, SH_L2, 1);
     input_dir(a, ACT_UP);
-    CHECK(a->mode == MODE_KIT, "L2+Up opens sample selection");
+    CHECK(a->mode == MODE_SAMPLE, "L2+Up opens the sample browser");
     handle_shoulder(a, SH_L2, 0);
     a->sh_suppress = 0;
 
@@ -2748,6 +3059,17 @@ static int test_length_run(App *a)
 /* Headless effects checks (`--test-fx`). */
 static void fx_test_pattern(Engine *e)
 {
+    static float test_sample[44100];
+    static int test_sample_ready = 0;
+    if (!test_sample_ready) {
+        for (int i = 0; i < 44100; i++)
+            test_sample[i] = 0.3f * sinf(6.2831853f * 440.0f * i / 44100.0f);
+        test_sample_ready = 1;
+    }
+    for (int t = 0; t < N_TRACKS; t++) {
+        e->sample_data[t] = test_sample;
+        e->sample_len[t] = 44100;
+    }
     for (int t = 0; t < N_TRACKS; t++)
         for (int s = 0; s < N_STEPS; s++)
             e->lvl[t][s] = 0;
@@ -3112,12 +3434,19 @@ static int test_mute_run(App *a)
     else { printf("FAIL: %s\n", msg); fails++; } \
 } while (0)
 
+    static float test_sample[44100];
+    for (int i = 0; i < 44100; i++)
+        test_sample[i] = (i % 100 < 50) ? 0.5f : -0.5f;
+
     float buf[2048 * 2];
     Engine e;
     engine_init(&e, 44100);
-    for (int t = 0; t < N_TRACKS; t++)
+    for (int t = 0; t < N_TRACKS; t++) {
         for (int s = 0; s < N_STEPS; s++)
             e.lvl[t][s] = e.rch[t][s] = 0;
+        e.sample_data[t] = test_sample;
+        e.sample_len[t] = 44100;
+    }
     e.bpm_x100 = 12000;
     e.lvl[0][0] = LVL_ACC;
     e.playing = 1;
@@ -3135,7 +3464,7 @@ static int test_mute_run(App *a)
 
     /* Auditioning must still work while the track is muted. */
     e.preview_track = 0;
-    engine_preview(&e, 0, e.kit[0], RCH_OFF, LVL_ON);
+    engine_preview(&e, 0, 0, RCH_OFF, LVL_ON);
     engine_mix(&e, buf, 2048);
     CHECK(test_peak(buf, 2048) > 0.001f, "preview sounds while muted");
 
@@ -3157,6 +3486,19 @@ static int test_mute_run(App *a)
     e.playing = 1;
     engine_mix(&e, buf, 2048);
     CHECK(test_peak(buf, 2048) > 0.001f, "unmute restores audio");
+
+    /* A track is limited to two live voices, even with a 4x roll. */
+    e.playing = 0;
+    for (int s = 0; s < N_STEPS; s++) e.lvl[0][s] = e.rch[0][s] = 0;
+    e.lvl[0][0] = LVL_ON;
+    e.rch[0][0] = RCH_4;
+    engine_restart(&e);
+    e.playing = 1;
+    for (int n = 0; n < 4; n++) engine_mix(&e, buf, 2048);
+    int track_voices = 0;
+    for (int i = 0; i < MAX_VOICES; i++)
+        if (e.voices[i].data && e.voices[i].track == 0) track_voices++;
+    CHECK(track_voices <= e.track_voice_limit, "a track keeps at most two voices");
     e.playing = 0;
     engine_free(&e);
 
@@ -3170,6 +3512,8 @@ static int test_mute_run(App *a)
         set->pat[0].bpm_x100 = 12000;
         set->pat[0].length = N_STEPS;
         set->pat[0].lvl[0][0] = LVL_ACC;
+        set->pat[0].sample[0] = test_sample;
+        set->pat[0].sample_len[0] = 44100;
         s.mute[0] = 1;
         engine_song_start(&s, set, 0, 0);
         engine_restart(&s);
@@ -3198,14 +3542,16 @@ static int test_mute_run(App *a)
     act(a, ACT_MUTE);
     CHECK(ue->mute[5] == 0, "Y unmutes the selected track");
 
-    a->mode = MODE_KIT;
+    a->mode = MODE_RCH;
     a->cur_track = 0;
     a->cur_step = 0;
     ue->mute[0] = 0;
     ue->preview_track = 0;
+    ue->sample_data[0] = test_sample;
+    ue->sample_len[0] = 44100;
     act(a, ACT_MUTE);
     CHECK(ue->mute[0] == 0, "Y does not mute outside the sequencer");
-    CHECK(ue->preview_track == 1, "Y still auditions in KIT mode");
+    CHECK(ue->preview_track == 1, "Y still auditions in RATCHET mode");
     ue->preview_track = 0;
 
     SDL_Quit();
@@ -3447,6 +3793,120 @@ static void handle_joy_axis(App *a, int axis, int val)
     else           input_dir(a, nd > 0 ? ACT_DOWN : ACT_UP);
 }
 
+/* Headless sampler checks (`--test-sampler`). */
+static int test_sampler_run(App *a)
+{
+    int fails = 0;
+    SDL_Init(SDL_INIT_TIMER);
+
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    char root[1200], sub[1220], wa[1220], wb[1240], pat[1240];
+    snprintf(root, sizeof root, "%s/sampler-assets", a->lib.conf_dir);
+#ifdef _WIN32
+    _mkdir(root);
+    snprintf(sub, sizeof sub, "%s/sub", root);
+    _mkdir(sub);
+#else
+    mkdir(root, 0755);
+    snprintf(sub, sizeof sub, "%s/sub", root);
+    mkdir(sub, 0755);
+#endif
+    snprintf(wa, sizeof wa, "%s/a.wav", root);
+    snprintf(wb, sizeof wb, "%s/b.wav", sub);
+    snprintf(pat, sizeof pat, "%s/sampler-test.txt", root);
+
+    static float frames[1000 * 2];
+    for (int i = 0; i < 1000 * 2; i++) frames[i] = (i & 1) ? 0.25f : -0.25f;
+    CHECK(wav_write_stereo16(wa, frames, 1000, 44100) == 0, "test WAV writes");
+    CHECK(wav_write_stereo16(wb, frames, 1000, 44100) == 0, "nested test WAV writes");
+
+    SampleBank bank;
+    samplebank_init(&bank, 44100, 16, 4u * 1024u * 1024u);
+    int idx = samplebank_load(&bank, root, "a.wav");
+    int len = 0;
+    const float *data = samplebank_data(&bank, idx, &len);
+    CHECK(idx >= 0 && data && len == 1000, "sample bank loads a WAV");
+    CHECK(samplebank_find(&bank, "a.wav") == idx, "sample bank caches by path");
+    CHECK(samplebank_load(&bank, root, "missing.wav") < 0, "missing sample is rejected");
+    CHECK(samplebank_load(&bank, root, "../a.wav") < 0, "path escape is rejected");
+    samplebank_clear(&bank);
+
+    SampleDirEntry entries[SAMPLE_LIST_MAX];
+    int n = sampler_list_dir(root, "", entries, SAMPLE_LIST_MAX);
+    CHECK(n == 2 && entries[0].is_dir && !strcmp(entries[0].name, "sub"),
+          "browser lists directories before files");
+    n = sampler_list_dir(root, "sub", entries, SAMPLE_LIST_MAX);
+    CHECK(n == 2 && entries[0].is_dir && !strcmp(entries[0].name, ".."),
+          "subdirectory lists the parent entry first");
+    CHECK(n == 2 && !strcmp(entries[1].name, "b.wav"), "nested WAV is listed");
+
+    snprintf(a->assets_root, sizeof a->assets_root, "%s", root);
+    snprintf(a->eng.sample_path[0], sizeof a->eng.sample_path[0], "%s", "a.wav");
+    sampler_live_reload(a);
+    CHECK(a->eng.sample_data[0] != NULL && a->eng.sample_len[0] == 1000,
+          "live pattern sample loads into the engine");
+
+    a->cur_track = 0;
+    a->sample_dir[0] = 0;
+    a->sample_sel = 0;
+    sample_browser_open(a);
+    for (int i = 0; i < a->sample_count; i++)
+        if (!strcmp(a->sample_list[i].name, "sub")) a->sample_sel = i;
+    sample_browser_enter(a);
+    CHECK(!strcmp(a->sample_dir, "sub"), "sample browser enters a directory");
+    a->sample_sel = 1;                       /* ".." then b.wav */
+    sample_browser_enter(a);
+    CHECK(!strcmp(a->eng.sample_path[0], "sub/b.wav") &&
+          a->eng.sample_data[0] != NULL,
+          "sample browser assigns a nested WAV to the track");
+
+    Engine r;
+    engine_init(&r, 44100);
+    snprintf(r.sample_path[2], sizeof r.sample_path[2], "%s", "sub/b.wav");
+    CHECK(pattern_save_file(&r, pat) == 0, "sampler pattern saves");
+    Engine q;
+    engine_init(&q, 44100);
+    CHECK(pattern_load_file(&q, pat) == 0 &&
+          !strcmp(q.sample_path[2], "sub/b.wav"),
+          "sampler path round-trips through the pattern file");
+    engine_free(&r);
+    engine_free(&q);
+
+    SongSet *set = calloc(1, sizeof *set);
+    if (set) {
+        samplebank_init(&bank, 44100, 16, 4u * 1024u * 1024u);
+        set->count = 1;
+        pattern_default_snapshot(&set->pat[0]);
+        snprintf(set->pat[0].sample_path[0], SAMPLE_PATH_MAX, "%s", "a.wav");
+        CHECK(song_load_samples(set, &bank, root) == 0 &&
+              set->pat[0].sample[0] != NULL,
+              "song snapshot resolves its sample bank");
+        samplebank_clear(&bank);
+        free(set);
+    } else {
+        CHECK(0, "song sampler test allocation");
+    }
+
+    remove(wa);
+    remove(wb);
+    remove(pat);
+#ifdef _WIN32
+    _rmdir(sub);
+    _rmdir(root);
+#else
+    rmdir(sub);
+    rmdir(root);
+#endif
+
+    SDL_Quit();
+    return fails ? 1 : 0;
+#undef CHECK
+}
+
 /* Headless punch-in checks (`--test-punch`). */
 static int test_punch_run(App *a)
 {
@@ -3566,7 +4026,11 @@ static int run_bounce(App *a, const char *outpath, int loops)
     engine_free(&a->eng);
     engine_init(&a->eng, rate);
     fx_apply(&a->eng, &fx);
-    if (load_current(a) != 0) demo_pattern(a);
+    if (load_current(a) != 0) {
+        demo_pattern(a);
+        sampler_default_assign(a);
+        sampler_live_reload(a);
+    }
     a->eng.playing = 1;
     engine_restart(&a->eng);
     int len = engine_length_clamp(a->eng.length);
@@ -3613,6 +4077,7 @@ int main(int argc, char **argv)
     int test_fx = 0;
     int test_mute = 0;
     int test_punch = 0;
+    int test_sampler = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -3632,11 +4097,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--test-fx")) test_fx = 1;
         else if (!strcmp(argv[i], "--test-mute")) test_mute = 1;
         else if (!strcmp(argv[i], "--test-punch")) test_punch = 1;
+        else if (!strcmp(argv[i], "--test-sampler")) test_sampler = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
-                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch]"
-                   " [--screenshot out.bmp [--mode edit|mute|punch|kit|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|l1|l2|r1|r2]]\n");
+                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-sampler]"
+                   " [--screenshot out.bmp [--mode edit|mute|punch|sampler|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|l1|l2|r1|r2]]\n");
             return 0;
         }
     }
@@ -3648,8 +4114,12 @@ int main(int argc, char **argv)
     else if (env && *env) snprintf(assets, sizeof assets, "%s", env);
     else if (base && *base) snprintf(assets, sizeof assets, "%sassets/wav", base);
     else snprintf(assets, sizeof assets, "assets/wav");
+    snprintf(a.assets_root, sizeof a.assets_root, "%s", assets);
 
     engine_init(&a.eng, 44100);
+    samplebank_init(&a.live_bank, 44100, N_TRACKS, 64u * 1024u * 1024u);
+    samplebank_init(&a.song_bank, 44100, SAMPLE_BANK_MAX, 64u * 1024u * 1024u);
+    samplebank_init(&a.preview_bank, 44100, 128, 64u * 1024u * 1024u);
 
     if (test_shortcuts) {
         SDL_free(base);
@@ -3658,9 +4128,11 @@ int main(int argc, char **argv)
         return rc;
     }
 
-    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch) {
-        samples_load_all(assets, 44100);
+    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch || test_sampler) {
         resolve_conf(&a, base ? base : ".");
+        if (!test_song && !test_length && !test_fx && !test_mute &&
+            !test_punch && !test_sampler)
+            install_default_pattern(&a);
         load_fx_settings(&a);
         if (pattern_arg >= 1 && pattern_arg <= PAT_MAX_SLOTS)
             pattern_set_active(&a.lib, pattern_arg);
@@ -3671,6 +4143,7 @@ int main(int argc, char **argv)
         if (test_fx) return test_fx_run(&a);
         if (test_mute) return test_mute_run(&a);
         if (test_punch) return test_punch_run(&a);
+        if (test_sampler) return test_sampler_run(&a);
 
         if (save_slot_set) {
             engine_free(&a.eng);
@@ -3678,7 +4151,11 @@ int main(int argc, char **argv)
             FxSettings fb;
             fx_get_fallback(&fb);
             fx_apply(&a.eng, &fb);
-            if (load_current(&a) != 0) demo_pattern(&a);
+            if (load_current(&a) != 0) {
+                demo_pattern(&a);
+                sampler_default_assign(&a);
+                sampler_live_reload(&a);
+            }
             if (save_slot_arg < 1 || save_slot_arg > PAT_MAX_SLOTS) {
                 fprintf(stderr, "rg808: --save-slot must be 1..%d\n", PAT_MAX_SLOTS);
                 return 1;
@@ -3702,6 +4179,13 @@ int main(int argc, char **argv)
             SongSet *set = calloc(1, sizeof(SongSet));
             if (!set) return 1;
             int missing = song_build_set(&a.song, &a.lib, set);
+            samplebank_clear(&a.song_bank);
+            int smissed = song_load_samples(set, &a.song_bank, a.assets_root);
+            if (smissed == -2) {
+                fprintf(stderr, "rg808: song sample set too large\n");
+                free(set);
+                return 1;
+            }
             const char *out = bounce ? bounce : a.song_wav_path;
             int rc = render_song_wav(&a, set, out, 0);
             if (rc == 0) {
@@ -3740,6 +4224,7 @@ int main(int argc, char **argv)
     else SDL_PauseAudioDevice(a.dev, 0);
 
     resolve_conf(&a, base ? base : ".");
+    install_default_pattern(&a);
     load_fx_settings(&a);
     if (pattern_arg >= 1 && pattern_arg <= PAT_MAX_SLOTS)
         pattern_set_active(&a.lib, pattern_arg);
@@ -3758,17 +4243,10 @@ int main(int argc, char **argv)
     a.song_sel = 0;
     a.song_last_save = SDL_GetTicks();
 
-    int missing = samples_load_all(assets, 44100);
-    if (missing > 0) fprintf(stderr, "rg808: %d track(s) have no samples in %s\n", missing, assets);
-
-    if (load_current(&a) != 0) demo_pattern(&a);
-
-    /* clamp selected variants to what actually loaded */
-    for (int t = 0; t < N_TRACKS; t++) {
-        int cnt = variant_count(t);
-        if (!cnt) { a.eng.kit[t] = 0; continue; }
-        if (a.eng.kit[t] < 0) a.eng.kit[t] = 0;
-        if (a.eng.kit[t] >= cnt) a.eng.kit[t] = cnt - 1;
+    if (load_current(&a) != 0) {
+        demo_pattern(&a);
+        sampler_default_assign(&a);
+        sampler_live_reload(&a);
     }
 
     if (shot) {
@@ -3787,7 +4265,7 @@ int main(int argc, char **argv)
                 a.punch_held = PUNCH_GATE;
                 a.shortcut_until = SDL_GetTicks() + 60000;
             }
-            else if (!strcmp(mode_arg, "kit"))   { a.mode = MODE_KIT; a.cur_step = a.eng.kit[a.cur_track]; }
+            else if (!strcmp(mode_arg, "sampler")) sample_browser_open(&a);
             else if (!strcmp(mode_arg, "rch"))   a.mode = MODE_RCH;
             else if (!strcmp(mode_arg, "swing")) a.mode = MODE_SWING;
             else if (!strcmp(mode_arg, "length")) a.mode = MODE_LENGTH;
