@@ -37,7 +37,7 @@ dist/         built port zip (generated)
 ```
 tools\fetch-deps.ps1          # one-time: SDL2 mingw + font
 powershell tools\prepare-assets.ps1   # one-time: kit from sample pack
-cmake -S . -B build -G Ninja
+cmake -S . -B build -G Ninja -DRG_MACHINE=808
 cmake --build build
 build\rg808.exe               # run (SDL2 DLL + assets are copied next to it)
 ```

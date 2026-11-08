@@ -270,6 +270,20 @@ extends M9; M11 is the performance FX layer.
   - [ ] **Risks / device check:** ~11.3 MiB extra heap per engine (ring +
     slice), click-free crossfades, and CPU headroom on the H700 with master FX
     plus punch-in active. Device spot-check still pending.
+- [x] **M12 - Shared core** *(core branch; see `CORE.md`)*
+  - [x] `src/core/` owns the sample-agnostic engine, pattern library, song
+    chain, master FX, punch-in FX, canvas and WAV loader.
+  - [x] `src/machines/808/` and `src/machines/smp/` provide only the track
+    table, sample model/browser, app shell and branding.
+  - [x] The engine plays resolved sample pointers; `PatternSnapshot` carries
+    both the 808 `kit[]` and the SMP `sample_path[]`, resolved by a machine
+    hook. `KIT` and `SMP` pattern lines are machine hooks too.
+  - [x] One tree builds both machines with `-DRG_MACHINE=808|smp`.
+  - [x] Verified: 808 bounce output is byte-identical to the pre-split build
+    (with and without `KIT`/FX lines); all 808 suites and the SMP sampler,
+    punch, mute, length and FX suites pass on PC.
+  - [ ] Core headless synthetic-machine test and the device cross-build check
+    remain for the next pass.
 
 ## Current state (as of 2026-11-07)
 
