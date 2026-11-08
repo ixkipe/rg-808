@@ -16,7 +16,7 @@ static inline int engine_length_clamp(int n)
     return n < 1 ? 1 : (n > N_STEPS ? N_STEPS : n);
 }
 
-enum { LVL_OFF = 0, LVL_ON = 1, LVL_ACC = 2 };
+enum { LVL_OFF = 0, LVL_ON = 1, LVL_ACC = 2, LVL_GHOST = 3, LVL_WEAK = 4, LVL_COUNT = 5 };
 enum { RCH_OFF = 0, RCH_2 = 1, RCH_3 = 2, RCH_4 = 3, RCH_FLAM = 4, RCH_COUNT = 5 };
 
 /* Master effects settings. The chain order is fixed:
@@ -159,6 +159,7 @@ void engine_kill_all_voices(Engine *e);           /* cut all voices at the next 
 void engine_restart(Engine *e);                   /* restart clock from step 0 / start bar */
 void engine_mix(Engine *e, float *dst, int frames); /* advance clock + fill dst (stereo interleaved) */
 int engine_selftest_swing(int rate);              /* headless playhead/swing check */
+int engine_selftest_levels(int rate);             /* headless ghost/weak gain check */
 
 /* Performance punch-in FX (R1 layer). Requests are consumed by the audio
  * thread at the next 16th-step boundary; release is immediate. */

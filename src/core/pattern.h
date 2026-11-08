@@ -52,5 +52,6 @@ int pattern_write_atomic(const char *path, const void *data, size_t len);
 int pattern_save_file(Engine *e, const char *path);
 int pattern_load_file(Engine *e, const char *path);
 int pattern_file_exists(const char *path);
+int pattern_selftest_levels(const char *path);   /* headless ghost/weak persistence */
 
 #endif

@@ -350,6 +350,9 @@ static int parse_pattern_stream(FILE *f, PatternSnapshot *s)
 {
     char line[512];
     int got_any = 0;
+    unsigned char vlv[N_TRACKS][N_STEPS];
+    unsigned char has_vlv[N_TRACKS] = { 0 };
+    memset(vlv, 0, sizeof vlv);
     while (fgets(line, sizeof line, f)) {
         if (fx_parse_line(&s->fx, line)) {
             got_any = 1;
@@ -370,6 +373,23 @@ static int parse_pattern_stream(FILE *f, PatternSnapshot *s)
             } else if (!strncmp(line, "LEN ", 4)) {
                 s->length = engine_length_clamp(atoi(line + 4));
                 got_any = 1;
+            } else if (!strncmp(line, "VLV ", 4)) {
+                if (sscanf(line + 4, "%4s", lab) == 1) {
+                    for (int t = 0; t < N_TRACKS; t++) {
+                        if (!strcmp(lab, TRACKS[t].label)) {
+                            char *p = strchr(line + 4, ' ');
+                            int n = 0;
+                            for (; p && *p; p++)
+                                if (*p >= '0' && *p <= '4' && n < N_STEPS)
+                                    vlv[t][n++] = (unsigned char)(*p - '0');
+                            if (n == N_STEPS) {
+                                has_vlv[t] = 1;
+                                got_any = 1;
+                            }
+                            break;
+                        }
+                    }
+                }
             } else if (machine_read_sample_line(s, line)) {
                 got_any = 1;
             } else if (!strncmp(line, "RCH ", 4)) {
@@ -400,6 +420,10 @@ static int parse_pattern_stream(FILE *f, PatternSnapshot *s)
             }
         }
     }
+    for (int t = 0; t < N_TRACKS; t++)
+        if (has_vlv[t])
+            for (int st = 0; st < N_STEPS; st++)
+                s->lvl[t][st] = vlv[t][st];
     fx_clamp(&s->fx);
     return got_any ? 0 : -2;
 }
@@ -411,6 +435,19 @@ static int write_pattern_stream(FILE *f, Engine *e)
     machine_write_sample_lines(f, e);
     for (int t = 0; t < N_TRACKS; t++) {
         fprintf(f, "%s ", TRACKS[t].label);
+        for (int s = 0; s < N_STEPS; s++) {
+            int lv = e->lvl[t][s];
+            int base = lv == LVL_ACC ? 2 : (lv == LVL_OFF ? 0 : 1);
+            fprintf(f, "%d", base);
+        }
+        fprintf(f, "\n");
+    }
+    for (int t = 0; t < N_TRACKS; t++) {
+        int need = 0;
+        for (int s = 0; s < N_STEPS; s++)
+            if (e->lvl[t][s] >= LVL_GHOST) { need = 1; break; }
+        if (!need) continue;
+        fprintf(f, "VLV %s ", TRACKS[t].label);
         for (int s = 0; s < N_STEPS; s++) fprintf(f, "%d", e->lvl[t][s]);
         fprintf(f, "\n");
     }
@@ -578,4 +615,114 @@ int pattern_rename_slot(PatternLib *lib, int slot, const char *name)
     if (!clean[0]) pattern_default_name(slot, clean, sizeof clean);
     snprintf(lib->name[slot - 1], PAT_NAME_LEN + 1, "%s", clean);
     return save_index(lib);
+}
+
+/* Headless check for the VLV sidecar: ghost/weak values round-trip, the base
+ * line stays 0/1/2 for older builds, and legacy files still load. */
+int pattern_selftest_levels(const char *path)
+{
+    int fails = 0;
+    if (!path) return 1;
+
+    Engine e;
+    engine_init(&e, 44100);
+    e.bpm_x100 = 12345;
+    e.swing_pct = 33;
+    e.length = 12;
+    for (int t = 0; t < N_TRACKS; t++)
+        for (int s = 0; s < N_STEPS; s++)
+            e.lvl[t][s] = e.rch[t][s] = 0;
+    e.lvl[0][0] = LVL_GHOST;
+    e.lvl[0][1] = LVL_WEAK;
+    e.lvl[0][2] = LVL_ON;
+    e.lvl[0][3] = LVL_ACC;
+    e.lvl[1][4] = LVL_GHOST;
+
+    if (pattern_save_file(&e, path) != 0) {
+        printf("FAIL: levels pattern saves\n");
+        fails++;
+    }
+
+    Engine r;
+    engine_init(&r, 44100);
+    if (pattern_load_file(&r, path) != 0) {
+        printf("FAIL: levels pattern loads\n");
+        fails++;
+    }
+    if (r.bpm_x100 != 12345 || r.swing_pct != 33 || r.length != 12) {
+        printf("FAIL: levels pattern keeps tempo/swing/length\n");
+        fails++;
+    }
+    for (int s = 0; s < 4; s++)
+        if (r.lvl[0][s] != e.lvl[0][s]) {
+            printf("FAIL: ghost/weak/regular/accent round-trip\n");
+            fails++;
+            break;
+        }
+    if (r.lvl[1][4] != LVL_GHOST) {
+        printf("FAIL: VLV line applies to a second track\n");
+        fails++;
+    }
+
+    /* The base line must stay 0/1/2; VLV carries the exact values. */
+    FILE *f = fopen(path, "r");
+    if (f) {
+        char line[512];
+        char prefix[32];
+        snprintf(prefix, sizeof prefix, "%s ", TRACKS[0].label);
+        int saw_base = 0, saw_vlv = 0;
+        while (fgets(line, sizeof line, f)) {
+            if (!strncmp(line, prefix, strlen(prefix))) {
+                saw_base = 1;
+                const char *p = line + strlen(prefix);
+                for (int s = 0; s < N_STEPS; s++) {
+                    char want = e.lvl[0][s] == LVL_ACC ? '2'
+                              : (e.lvl[0][s] == LVL_OFF ? '0' : '1');
+                    if (p[s] != want) {
+                        printf("FAIL: base level line is not backward compatible\n");
+                        fails++;
+                        break;
+                    }
+                }
+            }
+            if (!strncmp(line, "VLV ", 4) && strstr(line, TRACKS[0].label))
+                saw_vlv = 1;
+        }
+        fclose(f);
+        if (!saw_base) {
+            printf("FAIL: base level line missing\n");
+            fails++;
+        }
+        if (!saw_vlv) {
+            printf("FAIL: VLV line missing\n");
+            fails++;
+        }
+    } else {
+        printf("FAIL: levels pattern reopens\n");
+        fails++;
+    }
+
+    /* A file without VLV must load exactly like the old 0/1/2 format. */
+    f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "%s\nBPM 120.00\n", machine_pattern_magic());
+        fprintf(f, "%s 1000000000000000\n", TRACKS[0].label);
+        fclose(f);
+        Engine q;
+        engine_init(&q, 44100);
+        if (pattern_load_file(&q, path) != 0 ||
+            q.lvl[0][0] != LVL_ON || q.lvl[0][1] != LVL_OFF) {
+            printf("FAIL: legacy 0/1/2 pattern loads unchanged\n");
+            fails++;
+        }
+        engine_free(&q);
+    } else {
+        printf("FAIL: legacy levels pattern writes\n");
+        fails++;
+    }
+
+    remove(path);
+    engine_free(&e);
+    engine_free(&r);
+    return fails;
 }

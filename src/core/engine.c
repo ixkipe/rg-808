@@ -6,7 +6,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const float LVL_GAIN[3] = { 0.0f, 0.72f, 1.0f };
+static const float LVL_GAIN[LVL_COUNT] = {
+    0.0f,   /* off */
+    0.72f,  /* regular */
+    1.00f,  /* accented */
+    0.12f,  /* ghost */
+    0.40f   /* weak */
+};
+
+static float lvl_gain(unsigned char lv)
+{
+    if (lv >= LVL_COUNT) lv = LVL_ACC;
+    return LVL_GAIN[lv];
+}
 
 /* Master-effect delay lines. The delay is allocated on the heap so an Engine
  * stays small enough to live on the stack (the app also builds temporary
@@ -250,7 +262,7 @@ void engine_fire_step(Engine *e, int step)
         unsigned char lv = e->lvl[t][step];
         if (lv > LVL_OFF && !e->mute[t])
             fire_sched(e, t, (const float *)e->sample_data[t], e->sample_len[t],
-                       LVL_GAIN[lv], 0, e->rch[t][step], sps);
+                       lvl_gain(lv), 0, e->rch[t][step], sps);
     }
 }
 
@@ -335,7 +347,7 @@ static int mix_song_steps(Engine *e, int frames, int want_punch)
         for (int t = 0; t < N_TRACKS; t++) {
             unsigned char lv = sp->lvl[t][e->step];
             if (lv > LVL_OFF && !e->mute[t])
-                fire_sched(e, t, sp->sample[t], sp->sample_len[t], LVL_GAIN[lv],
+                fire_sched(e, t, sp->sample[t], sp->sample_len[t], lvl_gain(lv),
                            delay, sp->rch[t][e->step], sps);
         }
         e->next_step += sps;
@@ -603,7 +615,7 @@ void engine_mix(Engine *e, float *dst, int frames)
         int l = e->preview_lvl;
         e->preview_track = 0;
         if (t >= 0 && t < N_TRACKS)
-            fire_sched(e, t, data, len, LVL_GAIN[l == LVL_OFF ? LVL_ACC : l],
+            fire_sched(e, t, data, len, lvl_gain(l == LVL_OFF ? LVL_ACC : l),
                        0, r, samples_per_step(e));
     }
 
@@ -638,7 +650,7 @@ void engine_mix(Engine *e, float *dst, int frames)
                     unsigned char lv = e->lvl[t][e->step];
                     if (lv > LVL_OFF && !e->mute[t])
                         fire_sched(e, t, (const float *)e->sample_data[t], e->sample_len[t],
-                                   LVL_GAIN[lv], at, e->rch[t][e->step], sps);
+                                   lvl_gain(lv), at, e->rch[t][e->step], sps);
                 }
                 e->next_step += sps;
             }
@@ -753,6 +765,64 @@ int engine_selftest_swing(int rate)
         printf("FAIL: swung playhead should return to the straight grid on even steps\n");
         fails++;
     }
+    engine_free(&e);
+    return fails;
+}
+
+/* Headless check that ghost/weak/regular/accent are strictly ordered and that
+ * ghost is still audible. Uses a synthetic sample so it needs no assets. */
+int engine_selftest_levels(int rate)
+{
+    int fails = 0;
+    static float sample[48000];
+    for (int i = 0; i < 48000; i++)
+        sample[i] = 0.25f;
+
+    Engine e;
+    engine_init(&e, rate);
+    for (int t = 0; t < N_TRACKS; t++) {
+        e.sample_data[t] = sample;
+        e.sample_len[t] = 48000;
+    }
+    e.bpm_x100 = 12000;
+    e.length = 16;
+    e.playing = 1;
+
+    int sps = rate * 60 / (120 * 4);
+    float buf[2 * 8192];
+    float peak[LVL_COUNT] = { 0 };
+
+    for (int lv = LVL_ON; lv <= LVL_WEAK; lv++) {
+        for (int i = 0; i < MAX_VOICES; i++) e.voices[i].data = NULL;
+        for (int t = 0; t < N_TRACKS; t++)
+            for (int s = 0; s < N_STEPS; s++)
+                e.lvl[t][s] = e.rch[t][s] = 0;
+        e.lvl[0][0] = (unsigned char)lv;
+        engine_restart(&e);
+        engine_mix(&e, buf, sps);
+        for (int i = 0; i < 2 * sps; i++) {
+            float v = fabsf(buf[i]);
+            if (v > peak[lv]) peak[lv] = v;
+        }
+    }
+
+    if (!(peak[LVL_GHOST] > 0.001f)) {
+        printf("FAIL: ghost step is silent\n");
+        fails++;
+    }
+    if (!(peak[LVL_GHOST] < peak[LVL_WEAK])) {
+        printf("FAIL: ghost is not quieter than weak\n");
+        fails++;
+    }
+    if (!(peak[LVL_WEAK] < peak[LVL_ON])) {
+        printf("FAIL: weak is not quieter than regular\n");
+        fails++;
+    }
+    if (!(peak[LVL_ON] < peak[LVL_ACC])) {
+        printf("FAIL: regular is not quieter than accented\n");
+        fails++;
+    }
+
     engine_free(&e);
     return fails;
 }
