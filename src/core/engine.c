@@ -2,6 +2,7 @@
 #include "fx.h"
 #include "perf_fx.h"
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -60,6 +61,9 @@ void engine_init(Engine *e, int rate)
     e->rate = rate;
     e->master = 0.72f;
     e->cur_step = -1;
+    e->play_step = -1;
+    e->step_fire_at = 0;
+    e->step_prev = -1;
     e->bpm_x100 = 12000;
     e->length = N_STEPS;
     e->next_step = 0;
@@ -223,6 +227,9 @@ static int swing_delay_pct(int pct, int step, double sps)
 void engine_restart(Engine *e)
 {
     e->step = -1;
+    e->play_step = -1;
+    e->step_prev = -1;
+    e->step_fire_at = e->total_pos;
     e->next_step = (double)e->total_pos;
     if (e->song_playing) {
         const SongSet *set = (const SongSet *)e->song_set;
@@ -310,15 +317,21 @@ static int mix_song_steps(Engine *e, int frames, int want_punch)
                     e->playing = 0;
                     e->song_done = 1;
                     e->cur_step = -1;
+                    e->play_step = -1;
                     break;
                 }
             }
             sp = &set->pat[e->song_bar];
+            len = engine_length_clamp(sp->length);
             fx_apply(e, &sp->fx);
         }
 
         double sps = samples_per_step_bpm(e->rate, sp->bpm_x100);
-        int delay = at + swing_delay_pct(sp->swing_pct, e->step, sps);
+        int swing = swing_delay_pct(sp->swing_pct, e->step, sps);
+        int delay = at + swing;
+        e->step_prev = (e->step + len - 1) % len;
+        e->step_fire_at = e->total_pos + (unsigned long long)at +
+                          (unsigned long long)swing;
         for (int t = 0; t < N_TRACKS; t++) {
             unsigned char lv = sp->lvl[t][e->step];
             if (lv > LVL_OFF && !e->mute[t])
@@ -616,7 +629,11 @@ void engine_mix(Engine *e, float *dst, int frames)
                 if (want_punch && punch_at < 0) punch_at = at;
                 e->step++;
                 if (e->step >= len) e->step = 0;
-                at += swing_delay_pct(e->swing_pct, e->step, sps);
+                int swing = swing_delay_pct(e->swing_pct, e->step, sps);
+                e->step_prev = (e->step + len - 1) % len;
+                e->step_fire_at = e->total_pos + (unsigned long long)at +
+                                  (unsigned long long)swing;
+                at += swing;
                 for (int t = 0; t < N_TRACKS; t++) {
                     unsigned char lv = e->lvl[t][e->step];
                     if (lv > LVL_OFF && !e->mute[t])
@@ -629,6 +646,7 @@ void engine_mix(Engine *e, float *dst, int frames)
         }
     } else {
         e->cur_step = -1;
+        e->play_step = -1;
         e->next_step = (double)e->total_pos + samples_per_step(e);
         if (e->song_playing) e->song_playing = 0;
         if (want_punch) punch_at = 0;
@@ -679,6 +697,62 @@ void engine_mix(Engine *e, float *dst, int frames)
         dst[f] = x;
     }
 
+    if (!e->playing || e->step < 0) {
+        e->play_step = -1;
+    } else {
+        unsigned long long now = e->total_pos + (unsigned long long)frames;
+        e->play_step = (now < e->step_fire_at) ? e->step_prev : e->step;
+    }
+
     e->total_pos += (unsigned long long)frames;
     e->mix_count++;
+}
+
+/* Headless check that the UI playhead follows the swung hit instead of the
+ * straight grid. Uses a synthetic sample so it needs no assets. */
+int engine_selftest_swing(int rate)
+{
+    int fails = 0;
+    static float sample[48000];
+    for (int i = 0; i < 48000; i++)
+        sample[i] = 0.25f;
+
+    Engine e;
+    engine_init(&e, rate);
+    for (int t = 0; t < N_TRACKS; t++) {
+        e.sample_data[t] = sample;
+        e.sample_len[t] = 48000;
+    }
+    e.bpm_x100 = 12000;
+    e.swing_pct = 100;
+    e.length = 16;
+    e.lvl[0][0] = LVL_ON;
+    e.playing = 1;
+    engine_restart(&e);
+
+    int sps = rate * 60 / (120 * 4);
+    float buf[2 * 8192];
+
+    engine_mix(&e, buf, sps);
+    if (e.play_step != 0) {
+        printf("FAIL: swung playhead should still show step 0 at the odd boundary\n");
+        fails++;
+    }
+    engine_mix(&e, buf, sps / 2 - 1);
+    if (e.play_step != 0) {
+        printf("FAIL: swung playhead should wait for the delayed hit\n");
+        fails++;
+    }
+    engine_mix(&e, buf, 1);
+    if (e.play_step != 1) {
+        printf("FAIL: swung playhead should move to step 1 on the delayed hit\n");
+        fails++;
+    }
+    engine_mix(&e, buf, sps / 2);
+    if (e.play_step != 2) {
+        printf("FAIL: swung playhead should return to the straight grid on even steps\n");
+        fails++;
+    }
+    engine_free(&e);
+    return fails;
 }

@@ -28,6 +28,9 @@ int pattern_init(PatternLib *lib, const char *conf_dir, int migrate);
 
 /* Slot operations. Slots are 1-based; out-of-range values are rejected. */
 int pattern_save_slot(PatternLib *lib, Engine *e, int slot);
+/* Create a clean pattern in an empty slot: clear notes/ratchets but keep the
+ * current tempo, swing, length, FX and machine sample assignments. */
+int pattern_create_clean(PatternLib *lib, Engine *e, int slot);
 int pattern_load_slot(PatternLib *lib, Engine *e, int slot);
 int pattern_delete_slot(PatternLib *lib, int slot);
 int pattern_copy_slot(PatternLib *lib, int from, int to);

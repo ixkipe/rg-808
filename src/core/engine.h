@@ -128,6 +128,7 @@ typedef struct Engine {
 
     /* audio thread -> UI thread */
     volatile int cur_step;                 /* -1 when stopped */
+    volatile int play_step;                /* grid LED; follows swing delay */
     volatile int song_bar;                 /* current bar (0-based) */
     volatile int song_done;                /* non-looping song reached the end */
     volatile unsigned int mix_count;       /* completed engine_mix calls (buffer-swap ack) */
@@ -135,6 +136,8 @@ typedef struct Engine {
     /* audio-thread private state */
     unsigned long long total_pos;          /* frames mixed so far */
     double next_step;                      /* frame of next step boundary */
+    unsigned long long step_fire_at;       /* frame of the current audible step */
+    int step_prev;                         /* step shown before the swung hit */
     int step;
     Voice voices[MAX_VOICES];
     unsigned long long voice_fire[MAX_VOICES]; /* for stealing */
@@ -155,6 +158,7 @@ void engine_select_kit(Engine *e, int track, int variant); /* 808: set + resolve
 void engine_kill_all_voices(Engine *e);           /* cut all voices at the next callback */
 void engine_restart(Engine *e);                   /* restart clock from step 0 / start bar */
 void engine_mix(Engine *e, float *dst, int frames); /* advance clock + fill dst (stereo interleaved) */
+int engine_selftest_swing(int rate);              /* headless playhead/swing check */
 
 /* Performance punch-in FX (R1 layer). Requests are consumed by the audio
  * thread at the next 16th-step boundary; release is immediate. */

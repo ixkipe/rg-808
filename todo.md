@@ -5,3 +5,6 @@
 - introduce 2 new step volume types: ghost (just barely audible) and weak (quieter than regular)
   - 4 volume types total: ghost, weak, regular, accented
   - select by holding down A on a step in the sequencer for 0.5 sec, modal window pops up with 4 volume types, select w/ D-pad
+- when selecting an empty pattern in the pattern library - must create a clean pattern and switch to it
+- synchronize the sequencer's playhead with the swing
+- POSSIBLE BUG: check the "save pattern" functionality both in the main menu and in the pattern library menu. "save pattern" in the main menu must save the current state ONLY to the currently selected pattern, while the "save here" option in the pattern library must ONLY save to the pattern the cursor is currently at.

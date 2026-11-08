@@ -326,20 +326,25 @@ static int load_current(App *a)
 
 static int load_slot_into_editor(App *a, int slot)
 {
-    if (!pattern_slot_exists(&a->lib, slot)) return -1;
+    int existed = pattern_slot_exists(&a->lib, slot);
     /* Never drop the last few seconds of edits before autosave had a chance
      * to run, even when reloading the active slot. */
     if (a->dirty) {
         if (save_current(a) != 0) return -3;
         a->dirty = 0;
     }
+    /* Selecting an empty slot creates a clean pattern in place. The current
+     * tempo/FX/sample assignments are kept; only notes and ratchets are
+     * cleared. */
+    if (!existed && pattern_create_clean(&a->lib, &a->eng, slot) != 0)
+        return -2;
     if (pattern_load_slot(&a->lib, &a->eng, slot) != 0) return -2;
     a->lib.active_slot = slot;
     pattern_set_active(&a->lib, slot);
     a->dirty = 0;
     sampler_live_reload(a);
     clamp_cursor(a);
-    return 0;
+    return existed ? 0 : 1;
 }
 
 /* ------------------------------------------------------------------- ui */
@@ -1132,7 +1137,7 @@ static void draw_ui(App *a)
     }
 
     /* step LED + beat numbers */
-    int led = e->cur_step;
+    int led = e->play_step;
     int pat_len = engine_length_clamp(e->length);
     for (int s = 0; s < N_STEPS; s++) {
         int x = GRID_X0 + s * COL_PITCH;
@@ -2142,15 +2147,19 @@ static void pattern_do_action(App *a, int item)
     switch (item) {
     case 0: {                                    /* load selected slot */
         int rc = load_slot_into_editor(a, slot);
-        if (rc == 0)
+        if (rc == 1) {
+            set_msg(a, "NEW P%03d %s", slot, pattern_name(&a->lib, slot));
+            a->mode = MODE_EDIT;
+        } else if (rc == 0) {
             set_msg(a, "LOADED P%03d %s", slot, pattern_name(&a->lib, slot));
-        else if (rc == -1)
-            set_msg(a, "P%03d EMPTY", slot);
-        else if (rc == -3)
+            a->mode = MODE_PATTERN;
+        } else if (rc == -3) {
             set_msg(a, "SAVE FAILED");
-        else
+            a->mode = MODE_PATTERN;
+        } else {
             set_msg(a, "LOAD FAILED");
-        a->mode = MODE_PATTERN;
+            a->mode = MODE_PATTERN;
+        }
         break;
     }
     case 1:                                      /* overwrite slot with editor */
@@ -2192,6 +2201,90 @@ static void pattern_do_action(App *a, int item)
         a->mode = MODE_PATTERN;
         break;
     }
+}
+
+/* Headless pattern action checks (`--test-pattern`). */
+static int test_pattern_run(App *a)
+{
+    int fails = 0;
+    SDL_Init(SDL_INIT_TIMER);
+
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    char root[1200];
+    snprintf(root, sizeof root, "%s/pattern-test", a->lib.conf_dir);
+    PatternLib saved_lib = a->lib;
+    pattern_init(&a->lib, root, 0);
+    for (int s = 1; s <= 4; s++) pattern_delete_slot(&a->lib, s);
+
+    engine_free(&a->eng);
+    engine_init(&a->eng, 44100);
+    a->eng.bpm_x100 = 11100;
+    a->eng.lvl[0][0] = LVL_ON;
+    CHECK(pattern_save_slot(&a->lib, &a->eng, 1) == 0, "save slot 1");
+    a->eng.bpm_x100 = 22200;
+    a->eng.lvl[0][0] = LVL_ACC;
+    CHECK(pattern_save_slot(&a->lib, &a->eng, 2) == 0, "save slot 2");
+
+    /* Main menu SAVE PATTERN: only the active slot. */
+    a->lib.active_slot = 1;
+    pattern_set_active(&a->lib, 1);
+    a->eng.bpm_x100 = 12300;
+    a->dirty = 1;
+    CHECK(save_current(a) == 0, "main-menu save succeeds");
+    PatternSnapshot s1, s2, s3;
+    CHECK(pattern_load_snapshot(&a->lib, 1, &s1) == 0 && s1.bpm_x100 == 12300,
+          "main-menu save writes the active slot");
+    CHECK(pattern_load_snapshot(&a->lib, 2, &s2) == 0 && s2.bpm_x100 == 22200,
+          "main-menu save leaves the other slot");
+
+    /* SAVE HERE: cursor slot, then switch active (save-as). */
+    a->lib.active_slot = 1;
+    pattern_set_active(&a->lib, 1);
+    a->eng.bpm_x100 = 13300;
+    a->dirty = 1;
+    a->pat_sel = 2;
+    pattern_do_action(a, 1);
+    CHECK(a->lib.active_slot == 2, "SAVE HERE switches the active slot");
+    CHECK(a->dirty == 0, "SAVE HERE clears dirty");
+    CHECK(pattern_load_snapshot(&a->lib, 2, &s2) == 0 && s2.bpm_x100 == 13300,
+          "SAVE HERE writes the cursor slot");
+    CHECK(pattern_load_snapshot(&a->lib, 1, &s1) == 0 && s1.bpm_x100 == 12300,
+          "SAVE HERE leaves the other slot");
+
+    /* Selecting an empty slot creates a clean pattern and switches to it. */
+    a->lib.active_slot = 2;
+    pattern_set_active(&a->lib, 2);
+    a->eng.bpm_x100 = 14400;
+    a->eng.swing_pct = 33;
+    a->eng.lvl[0][0] = LVL_ACC;
+    a->eng.lvl[0][1] = LVL_ON;
+    a->dirty = 1;
+    a->pat_sel = 3;
+    int rc = load_slot_into_editor(a, 3);
+    CHECK(rc == 1, "empty slot is created");
+    CHECK(a->lib.active_slot == 3, "new clean slot becomes active");
+    CHECK(pattern_load_snapshot(&a->lib, 3, &s3) == 0, "clean slot exists");
+    CHECK(s3.bpm_x100 == 14400 && s3.swing_pct == 33,
+          "clean slot keeps tempo and swing");
+    CHECK(s3.lvl[0][0] == 0 && s3.lvl[0][1] == 0,
+          "clean slot has no notes");
+    CHECK(a->eng.lvl[0][0] == 0 && a->eng.lvl[0][1] == 0,
+          "editor is clean after creation");
+    CHECK(pattern_load_snapshot(&a->lib, 2, &s2) == 0 && s2.bpm_x100 == 14400,
+          "previous dirty slot was saved before creation");
+
+    for (int s = 1; s <= 3; s++) pattern_delete_slot(&a->lib, s);
+    a->lib = saved_lib;
+    engine_free(&a->eng);
+    engine_init(&a->eng, 44100);
+
+    SDL_Quit();
+    return fails ? 1 : 0;
+#undef CHECK
 }
 
 static void act(App *a, int act)
@@ -4078,6 +4171,8 @@ int main(int argc, char **argv)
     int test_mute = 0;
     int test_punch = 0;
     int test_sampler = 0;
+    int test_pattern = 0;
+    int test_swing = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -4098,10 +4193,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--test-mute")) test_mute = 1;
         else if (!strcmp(argv[i], "--test-punch")) test_punch = 1;
         else if (!strcmp(argv[i], "--test-sampler")) test_sampler = 1;
+        else if (!strcmp(argv[i], "--test-pattern")) test_pattern = 1;
+        else if (!strcmp(argv[i], "--test-swing")) test_swing = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
-                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-sampler]"
+                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-sampler] [--test-pattern] [--test-swing]"
                    " [--screenshot out.bmp [--mode edit|mute|punch|sampler|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|l1|l2|r1|r2]]\n");
             return 0;
         }
@@ -4128,7 +4225,15 @@ int main(int argc, char **argv)
         return rc;
     }
 
-    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch || test_sampler) {
+    if (test_swing) {
+        SDL_free(base);
+        int fails = engine_selftest_swing(48000);
+        if (fails == 0) printf("PASS: swing playhead\n");
+        engine_free(&a.eng);
+        return fails ? 1 : 0;
+    }
+
+    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch || test_sampler || test_pattern) {
         resolve_conf(&a, base ? base : ".");
         if (!test_song && !test_length && !test_fx && !test_mute &&
             !test_punch && !test_sampler)
@@ -4144,6 +4249,7 @@ int main(int argc, char **argv)
         if (test_mute) return test_mute_run(&a);
         if (test_punch) return test_punch_run(&a);
         if (test_sampler) return test_sampler_run(&a);
+        if (test_pattern) return test_pattern_run(&a);
 
         if (save_slot_set) {
             engine_free(&a.eng);
