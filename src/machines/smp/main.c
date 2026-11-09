@@ -3715,7 +3715,7 @@ static int test_mute_run(App *a)
     engine_mix(&e, buf, 2048);
     CHECK(test_peak(buf, 2048) > 0.001f, "unmute restores audio");
 
-    /* A track is limited to two live voices, even with a 4x roll. */
+    /* A 4x roll needs four live voices; a lower cap cuts the roll short. */
     e.playing = 0;
     for (int s = 0; s < N_STEPS; s++) e.lvl[0][s] = e.rch[0][s] = 0;
     e.lvl[0][0] = LVL_ON;
@@ -3726,7 +3726,7 @@ static int test_mute_run(App *a)
     int track_voices = 0;
     for (int i = 0; i < MAX_VOICES; i++)
         if (e.voices[i].data && e.voices[i].track == 0) track_voices++;
-    CHECK(track_voices <= e.track_voice_limit, "a track keeps at most two voices");
+    CHECK(track_voices == 4, "a 4x roll keeps four voices");
     e.playing = 0;
     engine_free(&e);
 

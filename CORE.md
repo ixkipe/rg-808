@@ -84,6 +84,14 @@ The sequencer has four audible step levels:
   sidecar carries the exact 0..4 values only for tracks that use ghost/weak.
   Older builds ignore `VLV` and play those steps as regular.
 
+## Voice limits
+
+- **RG-808:** `track_voice_limit = 0`; voice allocation uses the global-oldest
+  policy across the 64-voice pool.
+- **RG-SMP:** each track keeps up to **4** voices. This is the minimum needed
+  for a 4x ratchet; a lower cap cuts the third/fourth hit and makes 3x/4x
+  ratchets sound broken. Longer overlaps still use the global voice pool.
+
 ## Pattern library behavior
 
 - Main menu **SAVE PATTERN** writes the editor to the active slot only.
