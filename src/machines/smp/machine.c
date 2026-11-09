@@ -32,7 +32,9 @@ const char *machine_pattern_magic(void) { return "RGSMP1"; }
 
 void machine_init_engine(Engine *e)
 {
-    e->track_voice_limit = 2;
+    /* Four voices are the minimum for a 4x ratchet; a lower cap cuts the roll
+     * short and makes 3x/4x ratchets sound broken. */
+    e->track_voice_limit = 4;
     for (int t = 0; t < N_TRACKS; t++) {
         e->kit[t] = 0;
         e->sample_path[t][0] = 0;
