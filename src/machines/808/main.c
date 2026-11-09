@@ -3384,6 +3384,20 @@ static int test_mute_run(App *a)
     e.playing = 1;
     engine_mix(&e, buf, 2048);
     CHECK(test_peak(buf, 2048) > 0.001f, "unmute restores audio");
+
+    /* A 4x roll needs four live voices; a lower cap cuts the roll short. */
+    e.playing = 0;
+    for (int s = 0; s < N_STEPS; s++) e.lvl[0][s] = e.rch[0][s] = 0;
+    e.lvl[0][0] = LVL_ON;
+    e.rch[0][0] = RCH_4;
+    engine_restart(&e);
+    e.playing = 1;
+    for (int n = 0; n < 4; n++) engine_mix(&e, buf, 2048);
+    int track_voices = 0;
+    for (int i = 0; i < MAX_VOICES; i++)
+        if (e.voices[i].data && e.voices[i].track == 0) track_voices++;
+    CHECK(track_voices == 4, "a 4x roll keeps four voices");
+
     e.playing = 0;
     engine_free(&e);
 
