@@ -47,7 +47,7 @@ rg808.exe --bounce out.wav --loops 4    # render the active pattern to WAV
 rg808.exe --pattern 12 --bounce out.wav # render pattern slot 12
 rg808.exe --pattern 1 --save-slot 7     # headless copy slot 1 -> 7
 rg808.exe --song --bounce song.wav      # render the song chain once
-rg808.exe --song                        # export to conf/song.wav
+rg808.exe --song                        # export to conf/song_<tempo>_<date>_<time>.wav
 rg808.exe --test-song                   # headless song checks
 rg808.exe --test-length                 # headless pattern-length checks
 rg808.exe --test-fx                     # headless effects checks
@@ -102,7 +102,7 @@ tools\device\probe.sh > probe.txt 2>&1     # in Mustard Terminal
 **Shoulder shortcuts**: hold a shoulder button and the UI shows a D-pad-shaped
 cheat sheet for that button. The assigned combinations are:
 
-| Hold + D-pad | Opens |
+| Hold + D-pad | Opens / action |
 |--|--|
 | L1 + Left | Tempo |
 | L1 + Right | Swing |
@@ -111,6 +111,7 @@ cheat sheet for that button. The assigned combinations are:
 | L2 + Left | Pattern library |
 | L2 + Right | Song mode |
 | L2 + Up | Sample/kit selection |
+| L2 + Down | Export song to WAV (confirmation) |
 | R1 + Left/Right/Up/Down | 1/4, 1/8, 1/16, 1/32 stutter loop |
 | R1 + A / B / X / Y | Rewind, 1/16 gate, tape stop, phone filter |
 | R2 + Up | Drive FX |
@@ -118,8 +119,8 @@ cheat sheet for that button. The assigned combinations are:
 | R2 + Down | Delay FX |
 | R2 + Right | Reverb FX |
 
-Other L2 combinations are reserved for future features. Pressing a shoulder
-shows the hint; releasing it hides the hint immediately.
+All L2 combinations are mapped. Pressing a shoulder shows the hint; releasing
+it hides the hint immediately.
 
 **Mute**: in the sequencer, Y toggles a performance mute for the selected
 instrument; X still auditions it. Muted rows are tinted and marked with a red
@@ -178,8 +179,12 @@ chain. SELECT opens the song actions: INSERT BAR, DELETE BAR, MOVE BAR
 UP/DOWN, PLAY FROM HERE, LOOP ON/OFF, EXPORT WAV, SAVE SONG, CLEAR SONG and
 CANCEL. Each bar uses the BPM, swing, length, ratchets and kit stored in its
 pattern. The chain is saved in
-`conf/song.txt`; EXPORT WAV streams the whole song to `conf/song.wav` with a
-progress bar (44.1 kHz/16-bit stereo, one pass plus a two-second tail).
+`conf/song.txt`; EXPORT WAV streams the whole song to
+`conf/song_<tempo>_<yyyymmdd>_<hhmmss>.wav` with a progress bar (44.1 kHz/16-bit
+stereo, one pass plus a two-second tail). The tempo tag is bar 1's BPM, with
+`_` before a fractional part (`90_5`), and a same-second name gets `_2`, `_3`,
+... appended so an earlier export is never overwritten. L2+Down opens the same
+export after a confirmation page.
 
 Your pattern and tempo are saved automatically on quit (menu: QUIT) and can be
 saved/loaded manually. Patterns live in `conf/patterns/NNN.txt`, with slot

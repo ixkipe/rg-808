@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static void trim_eol(char *s)
 {
@@ -85,4 +86,60 @@ long long song_total_frames(const SongSet *set, int rate, int tail_frames)
         total += (double)rate * 60.0 / (bpm * 4.0) * len;
     }
     return (long long)total + tail_frames;
+}
+
+static int export_path_exists(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
+/* 12000 -> "120", 9050 -> "90_5", 12345 -> "123_45". */
+static void export_tempo_tag(char *buf, size_t cap, int bpm_x100)
+{
+    if (bpm_x100 < 400) bpm_x100 = 400;
+    if (bpm_x100 > 30000) bpm_x100 = 30000;
+    int whole = bpm_x100 / 100;
+    int frac = bpm_x100 % 100;
+    if (frac == 0)
+        snprintf(buf, cap, "%d", whole);
+    else if (frac % 10 == 0)
+        snprintf(buf, cap, "%d_%d", whole, frac / 10);
+    else
+        snprintf(buf, cap, "%d_%02d", whole, frac);
+}
+
+int song_export_path(char *out, size_t cap, const char *dir, int bpm_x100,
+                     time_t now)
+{
+    if (!out || cap == 0 || !dir) return -1;
+
+    struct tm tmv;
+    struct tm *tp = localtime(&now);
+    if (!tp) return -1;
+    tmv = *tp;
+
+    char tempo[16];
+    char stamp[32];
+    export_tempo_tag(tempo, sizeof tempo, bpm_x100);
+    if (strftime(stamp, sizeof stamp, "%Y%m%d_%H%M%S", &tmv) == 0)
+        return -1;
+
+    char base[1024];
+    int n = snprintf(base, sizeof base, "%s/song_%s_%s", dir, tempo, stamp);
+    if (n < 0 || (size_t)n >= sizeof base) return -1;
+
+    n = snprintf(out, cap, "%s.wav", base);
+    if (n < 0 || (size_t)n >= cap) return -1;
+    if (!export_path_exists(out)) return 0;
+
+    /* Never clobber an earlier export. This also covers an unset/frozen clock. */
+    for (int i = 2; i < 1000; i++) {
+        n = snprintf(out, cap, "%s_%d.wav", base, i);
+        if (n < 0 || (size_t)n >= cap) return -1;
+        if (!export_path_exists(out)) return 0;
+    }
+    return -1;
 }

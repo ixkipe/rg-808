@@ -36,10 +36,10 @@ packaging conventions.
 Shoulder shortcuts (hold + D-pad):
 L1+Left = tempo, L1+Right = swing, L1+Up = pattern length,
 L1+Down = ratchet notes, L2+Left = pattern library, L2+Right = song mode,
-L2+Up = sample/kit selection, R2+Up = drive FX, R2+Left = modulation FX,
-R2+Down = delay FX, R2+Right = reverb FX. Other L2 combinations are reserved
-for future features. Pressing a shoulder shows the hint overlay;
-releasing it hides the overlay immediately.
+L2+Up = sample/kit selection, L2+Down = export song to WAV (with a
+confirmation page), R2+Up = drive FX, R2+Left = modulation FX,
+R2+Down = delay FX, R2+Right = reverb FX. Pressing a shoulder shows the hint
+overlay; releasing it hides the overlay immediately.
 
 R1 punch-in FX: hold R1 and press Left/Right/Up/Down for 1/4, 1/8, 1/16 or
 1/32 stutter loops; A = 1/4 rewind, B = 1/16 gate, X = tape stop (one 1/8
@@ -78,8 +78,10 @@ Song mode (menu -> SONG MODE, or L2+Right): chain up to 512 bars of pattern
 slots. A picks the pattern for a bar, X jumps to the playing bar, START
 plays/stops, SELECT opens insert/delete/move, play-from-here, loop, export
 WAV, save and clear. Each bar keeps its pattern's BPM/swing/length/kit.
-EXPORT WAV writes `conf/song.wav` (44.1 kHz/16-bit stereo) with a progress
-bar; the chain lives in `conf/song.txt`.
+EXPORT WAV writes `conf/song_<tempo>_<yyyymmdd>_<hhmmss>.wav` (44.1 kHz/16-bit
+stereo) with a progress bar; the chain lives in `conf/song.txt`. The tempo tag
+is bar 1's BPM, with `_` before a fractional part (`90_5`). Existing exports
+are never overwritten: a repeated name gets `_2`, `_3`, ... appended.
 
 ## Compile
 

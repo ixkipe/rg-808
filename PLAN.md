@@ -307,14 +307,15 @@ extends M9; M11 is the performance FX layer.
 - Shoulder shortcut layer (post-M7): L1+Left tempo, L1+Right swing, L1+Up
   pattern length, L2+Left pattern library, L2+Right song mode, R1+Left kit
   selection, R1+Right ratchets; R2+Up/Left/Down/Right jump to the drive,
-  modulation, delay and reverb FX sections. Remaining combinations are reserved.
+  modulation, delay and reverb FX sections. L2+Down opens the song export
+  confirmation.
   Pressing any shoulder shows a D-pad-shaped hint overlay. L1/R1 no longer
   change tempo directly. Verified by `tools/test-shortcuts.ps1` (headless
   mapping test) plus `--mode l1|l2|r1|r2` hint screenshots.
 - M8 shipped (PC + cross-build): 512-bar song chains (`conf/song.txt`),
   immutable double-buffered snapshot sets, per-bar BPM/swing/kit, song page
   with picker/insert/delete/move/play-from-here/loop/jump, streaming
-  `conf/song.wav` export with progress bar. Verified by
+  `conf/song_<tempo>_<yyyymmdd>_<hhmmss>.wav` export with progress bar. Verified by
   `tools/test-m8.ps1` (persistence, 250 BPM switch, loop/end, UI actions,
   first-bar bit-exact vs pattern bounce).
 - M8.5 shipped (PC): per-pattern length 1–16 (`LEN` in the pattern file),
@@ -376,7 +377,7 @@ extends M9; M11 is the performance FX layer.
    raw joystick axes 4/5). If the SP maps them differently, pin it from the
    device's gamecontrollerdb.
 6. Device: play a short song chain and run EXPORT WAV; confirm gapless bar
-   switches, per-bar tempo changes, effects and that `conf/song.wav` plays back
-   cleanly.
+   switches, per-bar tempo changes, effects and that the timestamped
+   `conf/song_<tempo>_<yyyymmdd>_<hhmmss>.wav` plays back cleanly.
 7. Device: check the R1 punch-in layer (all eight effects, quantized starts,
    release crossfades, song playback) and spot-check CPU with master FX on.

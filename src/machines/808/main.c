@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #ifdef _WIN32
 #include <direct.h>
 #endif
@@ -47,7 +48,8 @@
 
 enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_KIT, MODE_RCH, MODE_SWING,
             MODE_LENGTH, MODE_FX, MODE_PATTERN, MODE_PAT_ACT, MODE_RENAME,
-            MODE_SONG, MODE_SONG_ACT, MODE_EXPORT, MODE_VOL };
+            MODE_SONG, MODE_SONG_ACT, MODE_EXPORT_CONFIRM, MODE_EXPORT,
+            MODE_VOL };
 
 enum Action {
     ACT_NONE, ACT_UP, ACT_DOWN, ACT_LEFT, ACT_RIGHT,
@@ -84,7 +86,8 @@ typedef struct {
     int song_dirty;
     Uint32 song_last_save;
     char song_path[1200];
-    char song_wav_path[1200];
+    char export_path[1200];
+    int export_return_mode;           /* mode restored after export/cancel */
     char fx_path[1200];
     int fx_sel;                       /* FX page cursor */
     int export_progress;              /* 0..1000 */
@@ -94,7 +97,7 @@ typedef struct {
     int sh_suppress;                  /* shortcut used: hide hint until release */
     int punch_held;                   /* punch effect currently held, -1 = none */
     Uint32 shortcut_until;            /* hint overlay deadline */
-    char msg[48];
+    char msg[80];
     Uint32 msg_until;
     int dirty;
     Uint32 last_save;
@@ -133,6 +136,15 @@ static void set_msg(App *a, const char *fmt, ...)
     vsnprintf(a->msg, sizeof a->msg, fmt, ap);
     va_end(ap);
     a->msg_until = SDL_GetTicks() + 2500;
+}
+
+/* File name after the last / or \ (for compact UI messages). */
+static const char *path_basename(const char *path)
+{
+    const char *slash = strrchr(path, '/');
+    const char *bslash = strrchr(path, '\\');
+    if (bslash && (!slash || bslash > slash)) slash = bslash;
+    return slash ? slash + 1 : path;
 }
 
 /* ------------------------------------------------------------ persistence */
@@ -241,7 +253,6 @@ static void resolve_conf(App *a, const char *base)
     }
 
     snprintf(a->song_path, sizeof a->song_path, "%s/song.txt", a->lib.conf_dir);
-    snprintf(a->song_wav_path, sizeof a->song_wav_path, "%s/song.wav", a->lib.conf_dir);
     snprintf(a->fx_path, sizeof a->fx_path, "%s/fx.txt", a->lib.conf_dir);
 }
 
@@ -325,6 +336,7 @@ static const char *shortcut_label(int sh, int ad)
         if (ad == ACT_LEFT) return "PATTERN LIBRARY";
         if (ad == ACT_RIGHT) return "SONG MODE";
         if (ad == ACT_UP) return "SAMPLE KIT";
+        if (ad == ACT_DOWN) return "EXPORT WAV";
         break;
     case SH_R2:
         if (ad == ACT_UP) return "DRIVE FX";
@@ -415,7 +427,8 @@ static void draw_shortcut_overlay(App *a)
 {
     Uint32 now = SDL_GetTicks();
     if (!a->shortcut_until || (int)(now - a->shortcut_until) >= 0) return;
-    if (a->pat_pick_target > 0 || a->mode == MODE_EXPORT) return;
+    if (a->pat_pick_target > 0 || a->mode == MODE_EXPORT ||
+        a->mode == MODE_EXPORT_CONFIRM) return;
     int sh = a->sh_last;
     if (sh < 0 || sh >= SH_COUNT) return;
     if (sh == SH_R1) { draw_punch_overlay(a); return; }
@@ -965,6 +978,25 @@ static void draw_export_progress(App *a)
     cv_text(c, mx + 16, my + 116, "PLEASE WAIT", 1, C_TEXT_DIM);
 }
 
+static void draw_export_confirm(App *a)
+{
+    Canvas *c = &a->cv;
+    int mw = 480, mh = 156;
+    int mx = (SCR_W - mw) / 2, my = (SCR_H - mh) / 2;
+    cv_rect(c, mx, my, mw, mh, C_PANEL);
+    cv_border(c, mx, my, mw, mh, 2, C_TEXT);
+    cv_text(c, mx + 16, my + 12, "EXPORT SONG?", 1, C_TEXT);
+    cv_text(c, mx + 16, my + 34, a->export_display, 1, C_TEXT_DIM);
+
+    char buf[64];
+    snprintf(buf, sizeof buf, "%d BARS  -  44.1 KHZ / 16-BIT STEREO",
+             a->song.count);
+    cv_text(c, mx + 16, my + 58, buf, 1, C_TEXT_DIM);
+    cv_text(c, mx + 16, my + 82, "A:EXPORT   B:CANCEL", 1, C_TEXT);
+    cv_text(c, mx + 16, my + 116,
+            "THE EXPORT KEEPS EVERY EARLIER WAV", 1, C_TEXT_DIM);
+}
+
 static void draw_ui(App *a)
 {
     Canvas *c = &a->cv;
@@ -1001,7 +1033,8 @@ static void draw_ui(App *a)
     cv_text(c, 288, 10, tbuf, 1, C_TEXT_DIM);
 
     /* active pattern slot + name, or the song bar in song mode */
-    if (a->mode == MODE_SONG || a->mode == MODE_SONG_ACT || a->mode == MODE_EXPORT) {
+    if (a->mode == MODE_SONG || a->mode == MODE_SONG_ACT ||
+        a->mode == MODE_EXPORT_CONFIRM || a->mode == MODE_EXPORT) {
         if (a->song.count > 0) {
             int bar = (e->song_playing && e->song_bar >= 0 && e->song_bar < a->song.count)
                       ? e->song_bar : a->song_sel;
@@ -1166,6 +1199,8 @@ static void draw_ui(App *a)
                      C_PANEL, C_TEXT, C_TEXT_DIM, C_CURSOR);
     } else if (a->mode == MODE_EXPORT) {
         draw_export_progress(a);
+    } else if (a->mode == MODE_EXPORT_CONFIRM) {
+        draw_export_confirm(a);
     }
 
     /* status / menu / hints */
@@ -1203,6 +1238,8 @@ static void draw_ui(App *a)
         cv_text(c, 10, SCR_H - 14, "UD:SELECT  LR:ADJUST  A:TOGGLE  B:BACK", 1, C_TEXT_DIM);
     else if (a->mode == MODE_EXPORT)
         cv_text(c, 10, SCR_H - 14, "EXPORTING WAV - PLEASE WAIT", 1, C_TEXT_DIM);
+    else if (a->mode == MODE_EXPORT_CONFIRM)
+        cv_text(c, 10, SCR_H - 14, "A:EXPORT  B:CANCEL", 1, C_TEXT_DIM);
     else
         cv_text(c, 10, SCR_H - 14, "A:STEP  B:CLEAR  X:HEAR  Y:MUTE  START:PLAY  SELECT:MENU  HOLD A SHOULDER", 1, C_TEXT_DIM);
 
@@ -1526,21 +1563,62 @@ static int render_song_wav(App *a, SongSet *set, const char *path, int show_prog
     return rc;
 }
 
-static void song_export_ui(App *a)
+/* Build the timestamped name and show the confirmation page. The export itself
+ * starts only when the user confirms, so cancelling has no side effects. */
+static void song_export_begin(App *a)
 {
-    if (a->song.count <= 0) { set_msg(a, "SONG EMPTY"); a->mode = MODE_SONG; return; }
+    int return_mode = (a->mode == MODE_SONG_ACT) ? MODE_SONG : a->mode;
+    if (a->song.count <= 0) {
+        set_msg(a, "SONG EMPTY");
+        a->mode = return_mode;
+        return;
+    }
+
+    /* The name carries the song's starting tempo (bar 1). A missing first bar
+     * becomes a silent default snapshot, so use the same fallback here. */
+    PatternSnapshot first;
+    if (pattern_load_snapshot(&a->lib, a->song.slot[0], &first) != 0)
+        pattern_default_snapshot(&first);
+
+    if (song_export_path(a->export_path, sizeof a->export_path, a->lib.conf_dir,
+                         first.bpm_x100, time(NULL)) != 0) {
+        set_msg(a, "EXPORT FAILED");
+        a->mode = return_mode;
+        return;
+    }
+
+    a->export_return_mode = return_mode;
+    a->export_progress = 0;
+    snprintf(a->export_display, sizeof a->export_display, "%s",
+             path_basename(a->export_path));
+    a->mode = MODE_EXPORT_CONFIRM;
+}
+
+static void song_export_run(App *a)
+{
+    if (a->song.count <= 0) {
+        set_msg(a, "SONG EMPTY");
+        a->mode = a->export_return_mode;
+        return;
+    }
+
     int missing = 0;
     SongSet *set = song_prepare(a, &missing);
-    if (!set) { set_msg(a, "EXPORT FAILED"); a->mode = MODE_SONG; return; }
+    if (!set) {
+        set_msg(a, "EXPORT FAILED");
+        a->mode = a->export_return_mode;
+        return;
+    }
 
     a->mode = MODE_EXPORT;
     a->export_progress = 0;
-    snprintf(a->export_display, sizeof a->export_display, "conf/song.wav");
-    int rc = render_song_wav(a, set, a->song_wav_path, 1);
-    a->mode = MODE_SONG;
+    int rc = render_song_wav(a, set, a->export_path, 1);
+    a->mode = a->export_return_mode;
+
+    const char *name = path_basename(a->export_path);
     if (rc != 0) set_msg(a, "EXPORT FAILED");
-    else if (missing > 0) set_msg(a, "EXPORTED (%d EMPTY BARS)", missing);
-    else set_msg(a, "EXPORTED conf/song.wav");
+    else if (missing > 0) set_msg(a, "EXPORTED %s (%d EMPTY)", name, missing);
+    else set_msg(a, "EXPORTED %s", name);
 }
 
 static void song_do_action(App *a, int item)
@@ -1561,7 +1639,7 @@ static void song_do_action(App *a, int item)
         set_msg(a, "LOOP %s", a->song.loop ? "ON" : "OFF");
         break;
     case 6:
-        song_export_ui(a);
+        song_export_begin(a);
         break;
     case 7:
         if (song_save_now(a) == 0) set_msg(a, "SONG SAVED");
@@ -1701,6 +1779,24 @@ static int test_song_run(App *a)
     CHECK(r.count == 4 && r.loop == 1 && r.slot[1] == 3,
           "song save/load round-trip");
     remove(tmp);
+
+    /* Timestamped export names: tempo tag, fractional form, never overwrite. */
+    char ep1[1200], ep2[1200], ep3[1200];
+    time_t fixed = (time_t)1700000000;
+    CHECK(song_export_path(ep1, sizeof ep1, a->lib.conf_dir, 12000, fixed) == 0,
+          "export name builds");
+    CHECK(strstr(ep1, "/song_120_") != NULL && strstr(ep1, ".wav") != NULL,
+          "export name has the whole tempo and extension");
+    FILE *ef = fopen(ep1, "wb");
+    if (ef) fclose(ef);
+    CHECK(song_export_path(ep2, sizeof ep2, a->lib.conf_dir, 12000, fixed) == 0 &&
+          strcmp(ep1, ep2) != 0 && strstr(ep2, "_2.wav") != NULL,
+          "an existing export gets a _2 suffix");
+    remove(ep1);
+    remove(ep2);
+    CHECK(song_export_path(ep3, sizeof ep3, a->lib.conf_dir, 9050, fixed) == 0 &&
+          strstr(ep3, "/song_90_5_") != NULL,
+          "fractional tempo uses an underscore separator");
 
     /* UI/action logic. */
     a->song = s;
@@ -2477,6 +2573,14 @@ static void act(App *a, int act)
         default: break;
         }
         break;
+    case MODE_EXPORT_CONFIRM:
+        switch (act) {
+        case ACT_CONFIRM: song_export_run(a); break;
+        case ACT_BACK:
+        case ACT_MENU: a->mode = a->export_return_mode; break;
+        default: break;
+        }
+        break;
     default: break;
     }
 }
@@ -2505,6 +2609,7 @@ static int punch_enabled(const App *a)
 {
     return a->sh_held[SH_R1] &&
            a->mode != MODE_RENAME && a->mode != MODE_EXPORT &&
+           a->mode != MODE_EXPORT_CONFIRM &&
            a->pat_pick_target == 0;
 }
 
@@ -2625,7 +2730,10 @@ static void handle_shoulder(App *a, int sh, int down)
 /* Open the menu bound to shoulder + direction. Returns 1 when a shortcut fired. */
 static int shortcut_activate(App *a, int sh, int ad)
 {
-    if (a->eng.song_playing) stop_playback(a);
+    /* Opening the export confirmation does not stop a running song; the export
+     * itself stops playback only when the user confirms. */
+    if (a->eng.song_playing && !(sh == SH_L2 && ad == ACT_DOWN))
+        stop_playback(a);
     switch (sh) {
     case SH_L1:
         if (ad == ACT_LEFT)  { a->mode = MODE_TEMPO; return 1; }
@@ -2648,6 +2756,10 @@ static int shortcut_activate(App *a, int sh, int ad)
             a->cur_step = a->eng.kit[a->cur_track];
             return 1;
         }
+        if (ad == ACT_DOWN) {
+            song_export_begin(a);
+            return 1;
+        }
         break;
     case SH_R2:
         if (ad == ACT_UP)    { fx_open_section(a, FXR_DRIVE_ON); return 1; }
@@ -2666,7 +2778,7 @@ static int shortcut_activate(App *a, int sh, int ad)
 static int shortcuts_enabled(const App *a)
 {
     if (a->pat_pick_target > 0) return 0;
-    return a->mode != MODE_RENAME;
+    return a->mode != MODE_RENAME && a->mode != MODE_EXPORT_CONFIRM;
 }
 
 /* Intercept a D-pad direction while a shoulder is held. Returns 1 if the
@@ -2706,6 +2818,9 @@ static int test_shortcuts_run(App *a)
     int fails = 0;
     SDL_Init(SDL_INIT_TIMER);
     a->lib.active_slot = 1;
+    /* Export-name generation needs a sane directory even in this headless test
+     * (resolve_conf has not run yet). */
+    snprintf(a->lib.conf_dir, sizeof a->lib.conf_dir, "%s", ".");
 
 #define CHECK(cond, msg) do { \
     if (cond) printf("PASS: %s\n", msg); \
@@ -2761,6 +2876,30 @@ static int test_shortcuts_run(App *a)
     CHECK(a->mode == MODE_KIT, "L2+Up opens sample selection");
     handle_shoulder(a, SH_L2, 0);
     a->sh_suppress = 0;
+
+    a->song.count = 0;
+    a->mode = MODE_EDIT;
+    a->msg[0] = 0;
+    handle_shoulder(a, SH_L2, 1);
+    input_dir(a, ACT_DOWN);
+    CHECK(a->mode == MODE_EDIT && !strcmp(a->msg, "SONG EMPTY"),
+          "L2+Down export reports an empty song");
+    handle_shoulder(a, SH_L2, 0);
+    a->sh_suppress = 0;
+
+    a->song.count = 1;
+    a->song.slot[0] = 1;
+    a->mode = MODE_EDIT;
+    handle_shoulder(a, SH_L2, 1);
+    input_dir(a, ACT_DOWN);
+    CHECK(a->mode == MODE_EXPORT_CONFIRM,
+          "L2+Down opens the export confirmation");
+    act(a, ACT_BACK);
+    CHECK(a->mode == MODE_EDIT,
+          "cancelling export returns to the previous mode");
+    handle_shoulder(a, SH_L2, 0);
+    a->sh_suppress = 0;
+    a->song.count = 0;
 
     a->mode = MODE_EDIT;
     a->punch_held = -1;
@@ -3905,7 +4044,7 @@ int main(int argc, char **argv)
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
                    " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-pattern] [--test-swing] [--test-levels]"
-                   " [--screenshot out.bmp [--mode edit|mute|punch|kit|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|vol|l1|l2|r1|r2]]\n");
+                   " [--screenshot out.bmp [--mode edit|mute|punch|kit|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|exportconfirm|vol|l1|l2|r1|r2]]\n");
             return 0;
         }
     }
@@ -3982,7 +4121,18 @@ int main(int argc, char **argv)
             SongSet *set = calloc(1, sizeof(SongSet));
             if (!set) return 1;
             int missing = song_build_set(&a.song, &a.lib, set);
-            const char *out = bounce ? bounce : a.song_wav_path;
+            char export_path[1200];
+            const char *out = bounce;
+            if (!out) {
+                if (song_export_path(export_path, sizeof export_path,
+                                     a.lib.conf_dir, set->pat[0].bpm_x100,
+                                     time(NULL)) != 0) {
+                    fprintf(stderr, "rg808: could not build an export name\n");
+                    free(set);
+                    return 1;
+                }
+                out = export_path;
+            }
             int rc = render_song_wav(&a, set, out, 0);
             if (rc == 0) {
                 long long frames = song_total_frames(set, 44100, 44100 * 2);
@@ -4101,10 +4251,29 @@ int main(int argc, char **argv)
                 a.mode = MODE_SONG_ACT;
                 a.song_sel = 0;
                 a.song_act_sel = 0;
-            } else if (!strcmp(mode_arg, "export")) {
-                a.mode = MODE_EXPORT;
-                a.export_progress = 500;
-                snprintf(a.export_display, sizeof a.export_display, "conf/song.wav");
+            } else if (!strcmp(mode_arg, "export") ||
+                       !strcmp(mode_arg, "exportconfirm")) {
+                char ep[1200];
+                int bpm = a.eng.bpm_x100;
+                if (a.song.count > 0) {
+                    PatternSnapshot ps;
+                    if (pattern_load_snapshot(&a.lib, a.song.slot[0], &ps) == 0)
+                        bpm = ps.bpm_x100;
+                }
+                if (song_export_path(ep, sizeof ep, a.lib.conf_dir, bpm,
+                                     time(NULL)) == 0)
+                    snprintf(a.export_display, sizeof a.export_display, "%s",
+                             path_basename(ep));
+                else
+                    snprintf(a.export_display, sizeof a.export_display,
+                             "song.wav");
+                if (!strcmp(mode_arg, "exportconfirm")) {
+                    a.mode = MODE_EXPORT_CONFIRM;
+                    a.export_return_mode = MODE_EDIT;
+                } else {
+                    a.mode = MODE_EXPORT;
+                    a.export_progress = 500;
+                }
             } else if (!strcmp(mode_arg, "l1")) {
                 a.sh_last = SH_L1; a.shortcut_until = SDL_GetTicks() + 60000;
             } else if (!strcmp(mode_arg, "l2")) {
