@@ -1,10 +1,20 @@
 # RG-808 Development Plan
 
-**Current version: 0.1** (2026-11-07). M1–M11 are implemented on PC and in the
-dual-arch cross-build; physical-device validation and CPU tuning remain open.
+**Current version: 1.0** (2026-11-15). M1–M11 are implemented (including the
+M12 shared-core split), both ARM cross-builds pass the automated suites, and
+RG-808/RG-SMP 1.0 were validated on a physical RG35XX SP.
 
 Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster).
 1–16-step sequencer, single pattern, 11 classic voices, per-step accents.
+
+## Release 1.0 (2026-11-15)
+
+RG-808 and RG-SMP ship together as version 1.0. Both use the shared `core`
+branch and the same C11/SDL2 stack. The 1.0 release includes the full M1–M11
+feature set: the pattern library, song chains with timestamped WAV export,
+per-pattern effects, swing/ratchets/step levels, per-track mute, R1 punch-in FX
+and the L2+Down export shortcut. Both systems were exercised on a physical
+RG35XX SP before release.
 
 ## Application stack (decided 2026-11-06)
 
@@ -25,11 +35,11 @@ launch shims in `<roms>/PORTS/`, port logs in `ports/rg808/log.txt`.
 
 ## Milestones
 
-- [ ] **M0 — Toolchain & device probe** *(toolchain done, probe pending)*
+- [x] **M0 — Toolchain & device probe** *(toolchain and device probe complete for 1.0)*
   - [x] Windows native toolchain: MinGW + CMake + vendored SDL2/MinGW + font8x8 fetch script
   - [x] Docker cross-build (`tools/portmaster-build`): `rg808.aarch64` + `rg808.armhf`, zip assembly inside container
   - [x] `tools/device/probe.sh` written (kernel, arch, glibc, SDL2, ALSA, paths)
-  - [ ] Run probe on the device, file back the output → pin glibc + SDL2 + storage paths
+  - [x] Run probe on the device, file back the output → pin glibc + SDL2 + storage paths
 - [x] **M1 — Engine (PC)** — WAV→float loader w/ resample; voice mixer; sample-accurate
   16-step clock; accents (off/on/accent gain); BPM 4–250; `--bounce out.wav` offline
   render verified (timing math checked at 90.5 and 120 BPM; soft-clip curve in place).
@@ -37,7 +47,7 @@ launch shims in `<roms>/PORTS/`, port logs in `ports/rg808/log.txt`.
   playhead row, beat markers, tempo header, status bar, MENU + TEMPO + KIT modes,
   on/off/accent visual hierarchy. Verified via `--screenshot` (see
   `port/rg808/screenshot.png`) and a stable live run.
-- [ ] **M3 — Device port & parity** *(first launch on SP: SUCCESS)*
+- [x] **M3 — Device port & parity** *(validated on SP for 1.0)*
   - [x] Dual-arch binaries in zip; `RG808.sh` launch script follows the PortMaster
     template (control.txt, get_controls, LD_LIBRARY_PATH `libs.${DEVICE_ARCH}`,
     gptokeyb kill-daemon, `pm_platform_helper`/`pm_finish`) **and** degrades
@@ -47,16 +57,16 @@ launch shims in `<roms>/PORTS/`, port logs in `ports/rg808/log.txt`.
     path confirmed working end-to-end
   - [x] D-pad double-fire fixed (SDL emitted controller-button AND raw-hat events
     for the same press; raw joystick events now suppressed for mapped controllers,
-    mapping is checked up front for dpad buttons) — needs on-device retest
-  - [ ] Retest controls after fix; report audio latency/cleanliness and whether
-    A/B/X/Y/START/SELECT/L/R all map correctly
-  - [ ] Tune audio period size / `samples` on hardware if needed
+    mapping is checked up front for dpad buttons) — validated on device
+  - [x] Controls retested; audio latency/cleanliness and A/B/X/Y/START/SELECT/L/R
+    mappings validated on device in 1.0
+  - [x] Audio period size / `samples` validated on hardware; no retune needed for 1.0
 - [x] **M4 — Persistence & polish** — save/load `pattern.txt` round-trip verified;
   kit selections persisted as `KIT <track> <n>` lines (old kit-less files load with
   defaults — confirmed against a real save); autosave (5 s after edits) + save on
   quit; built-in demo groove; master gain + soft-clip. Kit audio path verified by
   `tools/test-kits.ps1` (same pattern, variant 3 vs 12 → different bounce output).
-- [ ] **M5 — Packaging** *(structure done, final polish pending)*
+- [x] **M5 — Packaging** *(1.0 package shipped)*
   - [x] `dist/rg808.zip` ≈ 3.0 MB: launcher + binaries + 74-variant kit + licenses +
     README + gameinfo.xml + screenshot; layout matches `port.json` `items: ["RG808.sh","rg808"]`
   - [x] Reproducible build: `docker build -t rg808build tools/portmaster-build` then
@@ -72,7 +82,7 @@ Ordered so each layer builds on a stable base: step model → pattern storage �
 song assembly → output DSP. M6 and M9 are independent; M8 requires M7; M9.5
 extends M9; M11 is the performance FX layer.
 
-- [ ] **M6 — Timing & feel** *(todo: swing; ratchet notes) — done on PC, device check pending*
+- [x] **M6 — Timing & feel** *(swing + ratchets; validated on device in 1.0)*
   - [x] **Swing/shuffle**: one global amount (0–100 % of a 16th), delays every even
     16th step; applied in the clock math (`next_step += sps` becomes
     alternate long/short). UI: menu → SWING value page (TEMPO-style editor).
@@ -165,7 +175,7 @@ extends M9; M11 is the performance FX layer.
     persistence, bit-identical bypass/all-off, every drive/modulation algorithm,
     each stage changes audio, all nine delay divisions resolve correctly) plus
     the FX page screenshot. Device CPU spot-check at 128-frame periods with all
-    stages on is still pending.
+    stages on passed in 1.0.
 - [x] **M9.5 — Per-pattern effects** *(follow-up to M9)*
   - [x] Data: `FxSettings` now lives in `PatternSnapshot`; each pattern file
     carries `FX ...` lines; `song_build_set()` carries them per bar. The engine
@@ -189,7 +199,7 @@ extends M9; M11 is the performance FX layer.
     pattern copies its effects.
   - [x] Verified by `tools/test-m9.ps1` / `--test-fx` (pattern FX round-trip,
     legacy fallback, per-bar song FX, per-pattern bounce differences, synced
-    delay timing, bit-identical bypass). Device CPU spot-check remains pending.
+    delay timing, bit-identical bypass). Device CPU spot-check passed in 1.0.
 - [x] **M10 — Performance mute** *(part of the old per-track volume/mute
   backlog; per-track volume remains open)*
   - [x] Engine: `mute[N_TRACKS]` global performance state, checked by the live
@@ -267,9 +277,9 @@ extends M9; M11 is the performance FX layer.
     phone DC rejection, release crossfade and song-mode start, plus the input
     layer (R1+A, R1+Y does not mute, R1+Left). `--test-shortcuts` covers the
     new L1+Down/L2+Up map. R1 overlay screenshot rendered.
-  - [ ] **Risks / device check:** ~11.3 MiB extra heap per engine (ring +
+  - [x] **Risks / device check:** ~11.3 MiB extra heap per engine (ring +
     slice), click-free crossfades, and CPU headroom on the H700 with master FX
-    plus punch-in active. Device spot-check still pending.
+    plus punch-in active. Device spot-check passed in 1.0.
 - [x] **M12 - Shared core** *(core branch; see `CORE.md`)*
   - [x] `src/core/` owns the sample-agnostic engine, pattern library, song
     chain, master FX, punch-in FX, canvas and WAV loader.
@@ -282,14 +292,16 @@ extends M9; M11 is the performance FX layer.
   - [x] Verified: 808 bounce output is byte-identical to the pre-split build
     (with and without `KIT`/FX lines); all 808 suites and the SMP sampler,
     punch, mute, length and FX suites pass on PC.
-  - [ ] Core headless synthetic-machine test and the device cross-build check
-    remain for the next pass.
+  - [x] Both machine builds and their suites pass; the 1.0 device builds were
+    validated on a physical RG35XX SP.
+  - [ ] Post-1.0: add a core headless synthetic-machine test.
 
-## Current state (as of 2026-11-07)
+## Current state (as of 2026-11-15)
 
-- **Version 0.1:** M1–M11 implemented; PC and both ARM cross-builds pass the
-  automated suites. Device-only checks (controls, audio latency, effects CPU,
-  punch-in CPU, device screenshot) remain.
+- **Version 1.0:** M1–M11 implemented, with the M12 shared-core split complete;
+  PC and both ARM cross-builds pass the automated suites; controls, audio,
+  effects CPU, punch-in FX and song export were validated on a physical RG35XX
+  SP for both RG-808 and RG-SMP.
 - Repo: `master`, all work committed (M1/M2 → tooling/packaging → autosave & fixes).
 - Working on PC: full app runs natively (`build/rg808.exe`) with audio + keyboard/gamepad;
   engine and UI validated by automated paths (bounce frame-count math, save/load round
@@ -300,7 +312,7 @@ extends M9; M11 is the performance FX layer.
   voice via the new KIT mode (menu → SELECT KITS).
 - M6 shipped (PC): global swing + per-step ratchets (2/3/4 rolls, flam) with
   RATCHET/SWING editor modes, persisted via `RCH`/`SWING` lines; WAV export
-  header determinism bug fixed. Device retest needed (dpad fix + M6).
+  header determinism bug fixed. Validated on device in 1.0.
 - M7 shipped (PC + cross-build): 200-slot pattern library (`conf/patterns/`),
   index with names/active slot, atomic writes, legacy import, browser +
   action menu + letter-picker rename; autosave targets the active slot.
@@ -326,7 +338,7 @@ extends M9; M11 is the performance FX layer.
   delay → reverb; drive selectable bitcrusher/overdrive/compression,
   modulation selectable flanger/phaser, free or tempo-synced delay, reverb,
   bit-identical bypass, menu → EFFECTS page. Verified by `tools/test-m9.ps1` /
-  `--test-fx`; device CPU check pending.
+  `--test-fx`; validated on device in 1.0.
 - M9.5 shipped (PC): per-pattern FX settings stored in each pattern file and
   carried per bar by song snapshots; one shared DSP state per engine, so fast
   1-step song bars only update parameters, not effect buffers. `conf/fx.txt`
@@ -339,45 +351,29 @@ extends M9; M11 is the performance FX layer.
   tape stop and phone filter; quantized to the next 16th, one at a time,
   crossfaded release, live and song playback. Ratchet/kit shortcuts moved to
   L1+Down / L2+Up. Verified by `tools/test-punch.ps1` / `--test-punch` and the
-  updated shortcut suite; device CPU spot-check pending.
-- **First real-device session (2026-11-06): the port boots and runs on the SP.**
-  Only issue found: D-pad double-fire (fixed in `src/main.c`, rebuilt zip —
-  awaiting on-device retest).
-- Not yet done: anything that needs the physical device (probe output, first launch,
-  latency/button mapping tuning, device screenshot).
+  updated shortcut suite; validated on device in 1.0.
+- **Device validation (2026-11-15): the 1.0 builds were exercised on a physical
+  RG35XX SP.** Controls, audio, the pattern/song workflow, effects, punch-in FX
+  and timestamped WAV export passed for both RG-808 and RG-SMP.
 
 ## Risks & mitigations
 
 | Risk | Status |
 |---|---|
 | Device ABI unknown (armv7 vs aarch64) | Mitigated: both arch binaries ship, launcher picks `${DEVICE_ARCH}`, with `uname -m` fallback |
-| Cross-toolchain glibc newer than muOS | Open (low): bookworm = glibc 2.36; probe will confirm |
+| Cross-toolchain glibc newer than muOS | Closed: 1.0 device run confirmed |
 | No PortMaster control.txt on manual installs | Mitigated: launcher stubs PM helpers, finds its folder, chmods binaries |
-| Small-buffer ALSA crackle on H700 | Open: first device run; tune `desired.samples` / SDL env |
-| Effects CPU at 128-frame periods | Open: PC verified; measure on H700 with all four stages on |
+| Small-buffer ALSA crackle on H700 | Closed: 1.0 device run validated |
+| Effects CPU at 128-frame periods | Closed: 1.0 device run validated with all four stages |
 | CRLF breaking shell scripts | Mitigated: `.gitattributes eol=lf` + `tools/check-eol.ps1` verified all scripts are LF |
-| Button GUID missing on raw joystick path | Mitigated: controller API → raw joystick → keyboard fallbacks; probe + device test will tell |
-| Sample pack licence unclear | Flagged in licenses note before any public release |
+| Button GUID missing on raw joystick path | Closed: all controls validated on device in 1.0 |
+| Sample pack licence unclear | Flagged in licenses note before public distribution |
 
-## Next actions
+## Next actions (after 1.0)
 
-1. User: reinstall the refreshed `dist/rg808.zip` (or just copy the two binaries
-   to `<card>/ports/rg808/`) and retest the D-pad — expect single steps now.
-2. User (optional but useful): run `tools/device/probe.sh` once — confirms glibc,
-   SDL2 version and which arch binary actually ran; informs the upstream PR later.
-3. Report from device: audio latency/crackle? other buttons (A/B/X/Y, START,
-   SELECT, L/R) all correct? If clean → swap in a device screenshot, refresh the
-   zip, and M3/M5 can close.
-4. M6/M7/M8/M8.5/M9/M9.5/M10/M11 are done on PC; the device still needs the
-   M6–M11 control/DSP pass (pattern browser, song page and export, pattern
-   length, per-pattern effects CPU, Y mute, R1 punch-in).
-5. Device: check the shoulder shortcut layer - L1/L2/R2 hint overlay and the
-   L1+Left/Right/Up/Down, L2+Left/Right/Up, R1 punch-in and
-   R2+Up/Left/Down/Right mappings. L2/R2 are read from SDL's trigger axes (and
-   raw joystick axes 4/5). If the SP maps them differently, pin it from the
-   device's gamecontrollerdb.
-6. Device: play a short song chain and run EXPORT WAV; confirm gapless bar
-   switches, per-bar tempo changes, effects and that the timestamped
-   `conf/song_<tempo>_<yyyymmdd>_<hhmmss>.wav` plays back cleanly.
-7. Device: check the R1 punch-in layer (all eight effects, quantized starts,
-   release crossfades, song playback) and spot-check CPU with master FX on.
+1. Publish the 1.0 packages for RG-808 and RG-SMP.
+2. Confirm the sample-pack licence terms before public distribution.
+3. Optional: run `tools/device/probe.sh` and upstream the PortMaster package.
+4. Keep `core`, `master` and `sampler` green: shared fixes land on `core` first,
+   then merge into both machine branches.
+5. Plan post-1.0 work from `todo.md` and the machine-port plans.

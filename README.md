@@ -6,7 +6,8 @@
 
 ![FX](screenshots/fx.png)
 
-**Version 0.1** — first complete development release (2026-11-07).
+**Version 1.0** — first stable release (2026-11-15). RG-808 and RG-SMP both
+ship as 1.0, validated on a physical RG35XX SP.
 
 A 1–16-step, 11-track drum machine written in C with SDL2, packaged as a
 PortMaster "ready-to-run" port. Per-step accents, sample-accurate sequencing,
@@ -201,12 +202,13 @@ Each voice ships its whole variant family from the pack as `<id>NN.wav`
 the `dflt` column in `src/engine.c`.
 
 ## Status / roadmap
-- **Version 0.1** (2026-11-07): first complete development release. M1–M11
-  are implemented on PC and both ARM cross-builds; physical-device validation
-  and CPU tuning are still pending.
+- **Version 1.0** (2026-11-15): first stable release. M1–M11 are implemented;
+  both ARM cross-builds pass the automated suites; controls, audio, effects,
+  punch-in FX and song export were validated on a physical RG35XX SP. RG-SMP
+  ships as 1.0 from the `sampler` branch.
 - v1: single pattern, 11 tracks, accents, sample selection per voice
   (kit mode), save.
-- v2 (in progress): swing + ratchets (M6), 200-slot pattern library with
+- v2 (shipped in 1.0): swing + ratchets (M6), 200-slot pattern library with
   rename/copy/delete and legacy import (M7), shoulder shortcut layer, song
   chains with streaming WAV export (M8), per-pattern length 1–16, and master
   effects (M9: selectable bitcrusher/overdrive/compression, flanger/phaser,
