@@ -1,5 +1,8 @@
 # RG-SMP
 
+**Version 1.0** — first stable release (2026-11-15). RG-SMP and RG-808 both
+ship as 1.0.
+
 ![Sequencer](screenshots/sequencer.png)
 
 ![Sample Kit](screenshots/sample_select.png)
@@ -24,7 +27,7 @@
 - Missing files are detected at startup/pattern load; silent track + yellow `!`.
 - Volca-style black/dark-grey background, white/grey tracks, red accents,
   yellow warnings. Track labels show no sample filename; the browser does.
-- Each track keeps at most two live voices.
+- Each track keeps at most four live voices, so 3x/4x ratchets play in full.
 - The 808 pattern/kit format is not imported; new patterns use `RGSMP1`.
 - First launch installs a factory 909 groove named `DEFAULT` into slot 001
   (130 BPM, written once; deleting patterns later does not restore it).

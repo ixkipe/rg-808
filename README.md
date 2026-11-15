@@ -6,6 +6,9 @@
 
 ![FX](screenshots/fx.png)
 
+**Version 1.0** — first stable release (2026-11-15). RG-SMP and RG-808 both
+ship as 1.0, validated on a physical RG35XX SP.
+
 A 1-16-step, 11-track sample drum machine written in C with SDL2, packaged as a
 PortMaster "ready-to-run" port. It has a recursive WAV sample browser, one
 sample per track, per-step accents, sample-accurate sequencing, a 200-slot
@@ -155,9 +158,9 @@ starts on the next 16th boundary, only one effect can be active at a time, and
 releasing the button crossfades back to live audio. Punch-ins work during
 pattern and song playback and are not saved or included in WAV export.
 
-**Voice limit**: each track keeps at most two live voices; a third hit steals
-the oldest voice on that track. This prevents fast cymbal/hat repeats from
-piling up without reducing sample-bank RAM.
+**Voice limit**: each track keeps at most four live voices, so 3x/4x ratchets
+play in full; a fifth hit steals the oldest voice on that track. This prevents
+fast cymbal/hat repeats from piling up without reducing sample-bank RAM.
 
 **Swing**: menu -> EDIT SWING; 0-100 % shuffles every even 16th late.
 **Pattern length**: menu -> PATTERN LENGTH (or L1+Up) sets 1-16 steps.
