@@ -6,6 +6,9 @@
 
 ![FX](screenshots/fx.png)
 
+**Version 1.0** — first stable release (2026-11-15). RG-SMP and RG-808 both
+ship as 1.0, validated on a physical RG35XX SP.
+
 A 1-16-step, 11-track sample drum machine written in C with SDL2, packaged as a
 PortMaster "ready-to-run" port. It has a recursive WAV sample browser, one
 sample per track, per-step accents, sample-accurate sequencing, a 200-slot
@@ -19,8 +22,9 @@ sample model, look and brand name.
 ## Layout
 
 ```
-src/          C sources (engine, sample bank, audio, UI, persistence)
-assets/wav/   user-provided sample folders (not tracked by git)
+src/core/     shared engine, sequencer, patterns, songs, FX, punch-in FX
+src/machines/ machine definitions and app shells (808, smp)
+assets/wav/   tracked 808 kit; sampler/user packs live in ignored subdirs
 tools/        dev, test and packaging scripts
 port/         PortMaster packaging staging (RGSMP.sh, port.json, gameinfo)
 vendor/       SDL2 + public-domain font (fetched by tools/fetch-deps.ps1)
@@ -30,9 +34,9 @@ dist/         built port zip (generated)
 ## Samples
 
 WAVs live under `assets/wav/` and may be nested arbitrarily. The sample browser
-walks that tree on demand. `assets/wav` is intentionally ignored by git; put
-your packs there before building the port zip. The port zip includes whatever
-is present locally.
+walks that tree on demand. The tracked 808 kit is part of the shared tree;
+sampler/user packs live in ignored subdirectories (for example `assets/wav/909`)
+and are included in the port zip when present.
 
 Samples are loaded only when the active pattern or song needs them. A single
 sample is limited to 10 seconds. A song sample bank is limited to 128 unique
@@ -51,7 +55,7 @@ file and reloading the pattern brings the track back.
 
 ```
 tools\fetch-deps.ps1                  # one-time: SDL2 mingw + font
-cmake -S . -B build -G Ninja
+cmake -S . -B build -G Ninja -DRG_MACHINE=smp
 cmake --build build
 build\rg808.exe                       # local binary; UI/branding is RG-SMP
 ```
@@ -62,7 +66,7 @@ rg808.exe --assets DIR --bounce out.wav --loops 4   # render the active pattern
 rg808.exe --pattern 12 --bounce out.wav             # render pattern slot 12
 rg808.exe --pattern 1 --save-slot 7                 # headless copy slot 1 -> 7
 rg808.exe --song --bounce song.wav                  # render the song chain once
-rg808.exe --song                                   # export to conf/song.wav
+rg808.exe --song                                   # export to conf/song_<tempo>_<date>_<time>.wav
 rg808.exe --test-sampler                           # sample bank/browser/persistence
 rg808.exe --test-mute                              # performance-mute checks
 rg808.exe --test-punch                             # punch-in FX checks
@@ -114,7 +118,7 @@ the `rgsmp/` folder lands in `<card>/ports/` and `RGSMP.sh` in
 **Shoulder shortcuts**: hold a shoulder button and the UI shows an on-screen
 hint. The assigned combinations are:
 
-| Hold + D-pad | Opens |
+| Hold + D-pad | Opens / action |
 |--|--|
 | L1 + Left | Tempo |
 | L1 + Right | Swing |
@@ -123,6 +127,7 @@ hint. The assigned combinations are:
 | L2 + Left | Pattern library |
 | L2 + Right | Song mode |
 | L2 + Up | Sample browser |
+| L2 + Down | Export song to WAV (confirmation) |
 | R1 + Left/Right/Up/Down | 1/4, 1/8, 1/16, 1/32 stutter loop |
 | R1 + A / B / X / Y | Rewind, 1/16 gate, tape stop, phone filter |
 | R2 + Up | Drive FX |
@@ -130,8 +135,8 @@ hint. The assigned combinations are:
 | R2 + Down | Delay FX |
 | R2 + Right | Reverb FX |
 
-Other L2 combinations are reserved. Pressing a shoulder shows the hint;
-releasing it hides the hint immediately.
+All L2 combinations are mapped. Pressing a shoulder shows the hint; releasing
+it hides the hint immediately.
 
 **Sample browser**: menu -> SAMPLE BROWSER or L2+Up. D-pad scrolls, left/right
 pages, A enters a directory or assigns/auditions a WAV to the current track,
@@ -153,9 +158,9 @@ starts on the next 16th boundary, only one effect can be active at a time, and
 releasing the button crossfades back to live audio. Punch-ins work during
 pattern and song playback and are not saved or included in WAV export.
 
-**Voice limit**: each track keeps at most two live voices; a third hit steals
-the oldest voice on that track. This prevents fast cymbal/hat repeats from
-piling up without reducing sample-bank RAM.
+**Voice limit**: each track keeps at most four live voices, so 3x/4x ratchets
+play in full; a fifth hit steals the oldest voice on that track. This prevents
+fast cymbal/hat repeats from piling up without reducing sample-bank RAM.
 
 **Swing**: menu -> EDIT SWING; 0-100 % shuffles every even 16th late.
 **Pattern length**: menu -> PATTERN LENGTH (or L1+Up) sets 1-16 steps.
@@ -180,7 +185,10 @@ left/right pages, X jumps to the playing bar, START plays/stops. SELECT opens
 INSERT BAR, DELETE BAR, MOVE BAR UP/DOWN, PLAY FROM HERE, LOOP ON/OFF, EXPORT
 WAV, SAVE SONG, CLEAR SONG and CANCEL. Each bar uses the BPM, swing, length,
 sample assignments and FX stored in its pattern. EXPORT WAV writes
-`conf/song.wav` (44.1 kHz/16-bit stereo) with a progress bar.
+`conf/song_<tempo>_<yyyymmdd>_<hhmmss>.wav` (44.1 kHz/16-bit stereo) with a
+progress bar. The tempo tag is bar 1's BPM, with `_` before a fractional part
+(`90_5`); an existing name gets `_2`, `_3`, ... appended so an earlier export
+is never overwritten. L2+Down opens the same export after a confirmation page.
 
 ## Pattern format
 

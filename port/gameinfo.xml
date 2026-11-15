@@ -4,7 +4,7 @@
     <path>./RGSMP.sh</path>
     <name>RG-SMP</name>
     <desc>An 11-track sample drum machine for your handheld: recursive WAV browser, per-track sample assignment, 1-16-step patterns with accents, swing and ratchets, a 200-slot pattern library, 512-bar song chains with WAV export, master effects, mute and punch-in FX.</desc>
-    <releasedate>20261107T000000</releasedate>
+    <releasedate>20261115T000000</releasedate>
     <developer>vistor</developer>
     <publisher>Open Source</publisher>
     <genre>Music</genre>
