@@ -27,6 +27,32 @@ typedef struct ViewCtx {
  * machine definition. */
 const char *rg_shortcut_label(int sh, int dir);
 
+/* Face buttons in the shells' raw order (0=A, 1=B, 2=X, 3=Y). */
+enum { RGFACE_A = 0, RGFACE_B, RGFACE_X, RGFACE_Y, RGFACE_COUNT };
+
+/* Label of a shoulder + face-button shortcut, or NULL when it is free.
+ * Both tables are data: a new shoulder + face combination only needs a row
+ * here, and the hint below picks it up. */
+const char *rg_shortcut_face_label(int sh, int face);
+
+/* Direction slots of the hint overlay. */
+enum { RGH_LEFT = 0, RGH_RIGHT, RGH_UP, RGH_DOWN };
+
+/* One modal hint, shared by every shoulder so they all look alike: the D-pad
+ * on the left, the face diamond on the right (SP layout, X top). A shoulder
+ * without face bindings still shows the diamond, dimmed, which says "nothing
+ * here" instead of leaving the reader guessing.
+ *
+ * `engaged` marks cells that are currently doing something - the punch-in
+ * layer uses it to light the effect it is holding or playing. */
+typedef struct ShoulderHint {
+    int shoulder;                       /* RGSH_* */
+    unsigned char dir_engaged[4];       /* by RGH_* */
+    unsigned char face_engaged[RGFACE_COUNT];
+} ShoulderHint;
+
+void rg_draw_shoulder_hint(const ViewCtx *v, const ShoulderHint *h);
+
 /* Shared chrome. */
 void rg_view_panel(Canvas *c, int x, int y, int w, int h,
                    Uint32 panel, Uint32 border);
