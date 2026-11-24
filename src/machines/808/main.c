@@ -4075,6 +4075,38 @@ static int test_pitch_run(App *a)
 
     remove(path);
 
+    /* A song bar carries its own interval into the snapshot. */
+    {
+        PatternLib *lib = &a->lib;
+        char slot_path[1200];
+        snprintf(slot_path, sizeof slot_path, "%s/001.txt", lib->pat_dir);
+        for (int t = 0; t < N_TRACKS; t++) a->eng.pitch[t] = 0;
+        a->eng.pitch[1] = 9;
+        if (pattern_save_file(&a->eng, slot_path) == 0) {
+            lib->exists[0] = 1;
+            PatternSnapshot s;
+            if (pattern_load_snapshot(lib, 1, &s) == 0) {
+                CHECK(s.pitch[1] == 9 && s.pitch[0] == 0,
+                      "a loaded slot carries its interval into the snapshot");
+                machine_resolve_snapshot(&s);
+                int plain_len = 0;
+                const float *plain = sample_get(1, s.kit[1], &plain_len);
+                CHECK(plain && s.sample[1] != plain && s.sample_len[1] == plain_len,
+                      "the snapshot resolves a transposed sample for that bar");
+                s.pitch[1] = 0;
+                machine_resolve_snapshot(&s);
+                CHECK(s.sample[1] == plain,
+                      "clearing the bar's interval resolves the kit sample");
+            } else {
+                CHECK(0, "the pitched slot loads");
+            }
+        } else {
+            CHECK(0, "the pitched slot saves");
+        }
+        remove(slot_path);
+        for (int t = 0; t < N_TRACKS; t++) a->eng.pitch[t] = 0;
+    }
+
     SDL_Quit();
     return fails ? 1 : 0;
 #undef CHECK
