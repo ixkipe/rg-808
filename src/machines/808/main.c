@@ -1,4 +1,4 @@
-/* RG-808 ÃƒÆ’Ã…Â½ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¶ TR-808 clone main: app state, input, UI, persistence, CLI modes. */
+/* RG-808 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â½ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ TR-808 clone main: app state, input, UI, persistence, CLI modes. */
 #include <SDL.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -114,6 +114,7 @@ typedef struct {
     StepUi step_ui;
 } App;
 
+static ViewCtx view_ctx(App *a);
 static void handle_key(App *a, SDL_Keycode k);
 static void handle_key_up(App *a, SDL_Keycode k);
 
@@ -325,8 +326,6 @@ static const char *PAT_ACT[PAT_ACT_N] = {
     "LOAD SLOT", "SAVE HERE", "COPY ACTIVE HERE", "RENAME", "DELETE", "CANCEL"
 };
 
-static const char *SH_NAMES[SH_COUNT] = { "L1", "L2", "R1", "R2" };
-
 /* The core view layer mirrors this file's action values; the cast below is
  * only valid while the two stay in sync. */
 _Static_assert((int)ACT_NONE == RGV_NONE && (int)ACT_UP == RGV_UP &&
@@ -335,79 +334,11 @@ _Static_assert((int)ACT_NONE == RGV_NONE && (int)ACT_UP == RGV_UP &&
                (int)ACT_BACK == RGV_BACK,
                "the shell actions must match the core view vocabulary");
 
-static void draw_pad_cell(Canvas *c, int x, int y, int size, const char *sym, int active)
-{
-    cv_rect(c, x, y, size, size, active ? cv_dim(C_TEXT, 0.30f) : 0x1c1c24);
-    cv_border(c, x, y, size, size, 2, active ? C_TEXT : C_TEXT_DIM);
-    cv_text(c, x + (size - 8) / 2, y + (size - 8) / 2, sym, 1,
-            active ? C_TEXT : C_TEXT_DIM);
-}
 
-/* One cell in the punch-in cluster: key symbol on top, effect name below. */
-static void draw_punch_cell(Canvas *c, int x, int y, int size,
-                            const char *key, const char *l1, const char *l2,
-                            int on, int playing)
-{
-    Uint32 text = playing ? C_LED : (on ? C_CURSOR : C_TEXT);
-    cv_rect(c, x, y, size, size, on ? cv_dim(C_LED, 0.25f) : 0x1c1c24);
-    cv_border(c, x, y, size, size, 2, on ? C_LED : C_TEXT_DIM);
-    cv_text(c, x + (size - cv_text_w(key, 1)) / 2, y + 5, key, 1,
-            on ? C_TEXT : C_TEXT_DIM);
-    if (l1)
-        cv_text(c, x + (size - cv_text_w(l1, 1)) / 2, y + 21, l1, 1, text);
-    if (l2)
-        cv_text(c, x + (size - cv_text_w(l2, 1)) / 2, y + 33, l2, 1, text);
-}
-
-/* R1 punch-in layer: D-pad on the left, face-button diamond on the right.
- * SP face layout: X top, A right, B bottom, Y left. */
-static void draw_punch_overlay(App *a)
-{
-    Canvas *c = &a->cv;
-    int px = 20, py = 96, pw = 600, ph = 282;
-    cv_rect(c, px, py, pw, ph, C_PANEL);
-    cv_border(c, px, py, pw, ph, 2, C_TEXT);
-
-    cv_text(c, px + 16, py + 10, "R1 + PUNCH-IN FX", 1, C_TEXT);
-    cv_text(c, px + 16, py + 26,
-            "HOLD R1 AND PRESS A KEY - QUANTIZED TO 1/16", 1, C_TEXT_DIM);
-
-    const int size = 52, gap = 8;
-    const int cy = 228;
-    const int lx = 144, ly = cy - size / 2;
-    const int rx = 424;
-    int active = engine_punch_active(&a->eng);
-
-    draw_punch_cell(c, lx, ly - size - gap, size, "^", "1/16", NULL,
-                    a->punch_held == PUNCH_LOOP_16, active == PUNCH_LOOP_16);
-    draw_punch_cell(c, lx - size - gap, ly, size, "<", "1/4", NULL,
-                    a->punch_held == PUNCH_LOOP_4, active == PUNCH_LOOP_4);
-    draw_punch_cell(c, lx + size + gap, ly, size, ">", "1/8", NULL,
-                    a->punch_held == PUNCH_LOOP_8, active == PUNCH_LOOP_8);
-    draw_punch_cell(c, lx, ly + size + gap, size, "v", "1/32", NULL,
-                    a->punch_held == PUNCH_LOOP_32, active == PUNCH_LOOP_32);
-
-    draw_punch_cell(c, rx, ly - size - gap, size, "X", "TAPE", "STOP",
-                    a->punch_held == PUNCH_TAPESTOP, active == PUNCH_TAPESTOP);
-    draw_punch_cell(c, rx - size - gap, ly, size, "Y", "PHONE", NULL,
-                    a->punch_held == PUNCH_PHONE, active == PUNCH_PHONE);
-    draw_punch_cell(c, rx + size + gap, ly, size, "A", "REWIND", NULL,
-                    a->punch_held == PUNCH_REWIND, active == PUNCH_REWIND);
-    draw_punch_cell(c, rx, ly + size + gap, size, "B", "GATE", NULL,
-                    a->punch_held == PUNCH_GATE, active == PUNCH_GATE);
-
-    const char *left = "D-PAD: STUTTER LOOPS";
-    const char *right = "FACE BUTTONS: FX";
-    cv_text(c, lx + size / 2 - cv_text_w(left, 1) / 2, py + ph - 52,
-            left, 1, C_TEXT_DIM);
-    cv_text(c, rx + size / 2 - cv_text_w(right, 1) / 2, py + ph - 52,
-            right, 1, C_TEXT_DIM);
-    cv_text(c, px + 16, py + ph - 18,
-            "ONE EFFECT AT A TIME - RELEASE TO RETURN TO LIVE", 1, C_TEXT_DIM);
-}
-
-/* Transient D-pad-shaped hint shown while a shoulder button is down (and for
- * a moment after release). */
+/* Transient hint shown while a shoulder button is down (and for a moment
+ * after release). Every shoulder uses the same panel: the D-pad on the left,
+ * the face diamond on the right, so a new shoulder + face combination only
+ * needs a label row in the core tables. */
 static void draw_shortcut_overlay(App *a)
 {
     Uint32 now = SDL_GetTicks();
@@ -416,66 +347,32 @@ static void draw_shortcut_overlay(App *a)
         a->mode == MODE_EXPORT_CONFIRM) return;
     int sh = a->sh_last;
     if (sh < 0 || sh >= SH_COUNT) return;
-    if (sh == SH_R1) { draw_punch_overlay(a); return; }
 
-    Canvas *c = &a->cv;
-    int px = 20, py = 110, pw = 600, ph = 250;
-    cv_rect(c, px, py, pw, ph, C_PANEL);
-    cv_border(c, px, py, pw, ph, 2, C_TEXT);
-
-    char buf[80];
-    snprintf(buf, sizeof buf, "%s + D-PAD", SH_NAMES[sh]);
-    cv_text(c, px + 16, py + 10, buf, 1, C_TEXT);
-    cv_text(c, px + 16, py + 26,
-            "PRESS A DIRECTION TO OPEN ITS MENU", 1, C_TEXT_DIM);
-
-    const int cell = 42, gap = 6;
-    int cx = px + 210, cy = py + 140;
-    int lx = cx - cell / 2 - gap - cell;
-    int rx = cx + cell / 2 + gap;
-    int uy = cy - cell / 2 - gap - cell;
-    int dy = cy + cell / 2 + gap;
-
-    const char *ll = rg_shortcut_label(sh, ACT_LEFT);
-    const char *rl = rg_shortcut_label(sh, ACT_RIGHT);
-    const char *ul = rg_shortcut_label(sh, ACT_UP);
-    const char *dl = rg_shortcut_label(sh, ACT_DOWN);
-
-    draw_pad_cell(c, cx - cell / 2, uy, cell, "^", ul != NULL);
-    draw_pad_cell(c, lx, cy - cell / 2, cell, "<", ll != NULL);
-    draw_pad_cell(c, rx, cy - cell / 2, cell, ">", rl != NULL);
-    draw_pad_cell(c, cx - cell / 2, dy, cell, "v", dl != NULL);
-    cv_rect(c, cx - cell / 2, cy - cell / 2, cell, cell, 0x1c1c24);
-    cv_border(c, cx - cell / 2, cy - cell / 2, cell, cell, 2, C_TEXT_DIM);
-
-    if (ll) {
-        cv_text(c, lx - 12 - cv_text_w(ll, 1), cy - 4, ll, 1, C_TEXT);
-    } else {
-        cv_text(c, lx - 20, cy - 4, "-", 1, C_TEXT_DIM);
+    ShoulderHint h;
+    memset(&h, 0, sizeof h);
+    h.shoulder = sh;
+    if (sh == SH_R1) {
+        /* Light the effect being held, waiting for the next 16th, or playing. */
+        int held = a->punch_held;
+        int pend = engine_punch_pending(&a->eng);
+        int live = engine_punch_active(&a->eng);
+        int on = held >= 0 ? held : (pend >= 0 ? pend : live);
+        if (on >= 0) {
+            switch (on) {
+            case PUNCH_LOOP_4:  h.dir_engaged[RGH_LEFT] = 1; break;
+            case PUNCH_LOOP_8:  h.dir_engaged[RGH_RIGHT] = 1; break;
+            case PUNCH_LOOP_16: h.dir_engaged[RGH_UP] = 1; break;
+            case PUNCH_LOOP_32: h.dir_engaged[RGH_DOWN] = 1; break;
+            case PUNCH_REWIND:  h.face_engaged[RGFACE_A] = 1; break;
+            case PUNCH_GATE:    h.face_engaged[RGFACE_B] = 1; break;
+            case PUNCH_TAPESTOP:h.face_engaged[RGFACE_X] = 1; break;
+            case PUNCH_PHONE:   h.face_engaged[RGFACE_Y] = 1; break;
+            default: break;
+            }
+        }
     }
-    if (rl) {
-        cv_text(c, rx + cell + 12, cy - 4, rl, 1, C_TEXT);
-    } else {
-        cv_text(c, rx + cell + 12, cy - 4, "-", 1, C_TEXT_DIM);
-    }
-    if (ul) {
-        cv_text(c, cx - cv_text_w(ul, 1) / 2, uy - 14, ul, 1, C_TEXT);
-    } else {
-        cv_text(c, cx - 4, uy - 14, "-", 1, C_TEXT_DIM);
-    }
-    if (dl) {
-        cv_text(c, cx - cv_text_w(dl, 1) / 2, dy + cell + 6, dl, 1, C_TEXT);
-    } else {
-        cv_text(c, cx - 4, dy + cell + 6, "-", 1, C_TEXT_DIM);
-    }
-
-    cv_text(c, px + 16, py + ph - 18,
-            "RELEASE THE SHOULDER TO CLOSE", 1, C_TEXT_DIM);
-    if (sh == SH_L1) {
-        const char *face = "X: PITCH";
-        cv_text(c, px + pw - cv_text_w(face, 1) - 16, py + ph - 18,
-                face, 1, C_TEXT);
-    }
+    ViewCtx v = view_ctx(a);
+    rg_draw_shoulder_hint(&v, &h);
 }
 
 static void draw_pattern_list(App *a, int with_actions)
@@ -2923,6 +2820,13 @@ static int test_shortcuts_run(App *a)
     a->sh_suppress = 0;
 
     a->mode = MODE_EDIT;
+    CHECK(rg_shortcut_face_label(RGSH_L1, RGFACE_X) != NULL,
+          "L1+X has a face-button hint");
+    CHECK(rg_shortcut_face_label(RGSH_L2, RGFACE_X) == NULL,
+          "a shoulder without face bindings reports none");
+    CHECK(rg_shortcut_label(RGSH_R1, RGV_LEFT) != NULL,
+          "the punch-in directions are in the hint table");
+
     a->cur_track = 1;
     a->eng.pitch[1] = 0;
     handle_shoulder(a, SH_L1, 1);
