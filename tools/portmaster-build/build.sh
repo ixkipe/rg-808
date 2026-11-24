@@ -1,41 +1,69 @@
 #!/bin/bash
-# Runs inside the rgsmpbuild container with the repo mounted at /src.
-# Produces /src/dist/rgsmp.zip (PortMaster installable) and the raw binaries.
+# Cross-build for the PortMaster ports. Runs inside the rg808build container
+# with the repo mounted at /src.
+#
+#   MACHINE=smp  (default) -> dist/rgsmp.zip  (port/RGSMP.sh + port/rgsmp/)
+#   MACHINE=808           -> dist/rg808.zip  (port/RG808.sh + port/rg808/)
+#
+# The sources follow the post-split layout: the shared core in src/core/ and
+# the machine shell in src/machines/<machine>/.
 set -e
 cd /src
 
-SRCS="src/main.c src/engine.c src/canvas.c src/samplebank.c src/wav.c src/pattern.c src/song.c src/fx.c src/perf_fx.c"
-CFLAGS="-O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -I/usr/include/SDL2 -DNDEBUG"
+MACHINE="${MACHINE:-smp}"
+case "$MACHINE" in
+  808)
+    PORT=rg808
+    LAUNCHER=RG808.sh
+    MDIR=src/machines/808
+    MSRC="src/machines/808/machine.c src/machines/808/samples.c src/machines/808/main.c"
+    ;;
+  smp)
+    PORT=rgsmp
+    LAUNCHER=RGSMP.sh
+    MDIR=src/machines/smp
+    MSRC="src/machines/smp/machine.c src/machines/smp/samplebank.c src/machines/smp/main.c"
+    ;;
+  *)
+    echo "unknown MACHINE=$MACHINE (expected smp or 808)" >&2
+    exit 1
+    ;;
+esac
+
+CORE="src/core/engine.c src/core/canvas.c src/core/wav.c src/core/pattern.c src/core/song.c src/core/fx.c src/core/perf_fx.c src/core/step_ui.c src/core/views/views.c"
+SRCS="$CORE $MSRC"
+CFLAGS="-O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Isrc/core -I$MDIR -I/usr/include/SDL2 -DNDEBUG"
 LIBS="-lSDL2 -lm"
 
-mkdir -p dist/rgsmp-staging
+STAGE="dist/$PORT-staging"
+mkdir -p "$STAGE"
 
 echo "== aarch64 =="
-aarch64-linux-gnu-gcc $CFLAGS -o dist/rgsmp-staging/rgsmp.aarch64 $SRCS $LIBS
+aarch64-linux-gnu-gcc $CFLAGS -o "$STAGE/$PORT.aarch64" $SRCS $LIBS
 
 echo "== armhf =="
 arm-linux-gnueabihf-gcc $CFLAGS -march=armv7-a -mfpu=neon-vfpv4 \
-  -o dist/rgsmp-staging/rgsmp.armhf $SRCS $LIBS
+  -o "$STAGE/$PORT.armhf" $SRCS $LIBS
 
-file dist/rgsmp-staging/rgsmp.* || true
+file "$STAGE/$PORT".* || true
 
-# assemble zip tree: RGSMP.sh + rgsmp/{binaries, assets, licenses}
+# assemble zip tree: <LAUNCHER> + <PORT>/{binaries, assets, licenses}
 rm -rf dist/build
-mkdir -p dist/build/rgsmp
-cp port/RGSMP.sh dist/build/
-cp dist/rgsmp-staging/rgsmp.* dist/build/rgsmp/
-mkdir -p dist/build/rgsmp/assets
-cp -r assets/wav dist/build/rgsmp/assets/
-cp -r port/rgsmp/licenses dist/build/rgsmp/
-[ -f port/rgsmp/screenshot.png ] && cp port/rgsmp/screenshot.png dist/build/rgsmp/ || true
-cp port/README.md dist/build/rgsmp/
-[ -f port/gameinfo.xml ] && cp port/gameinfo.xml dist/build/rgsmp/ || true
+mkdir -p "dist/build/$PORT"
+cp "port/$LAUNCHER" dist/build/
+cp "$STAGE/$PORT".* "dist/build/$PORT/"
+mkdir -p "dist/build/$PORT/assets"
+cp -r assets/wav "dist/build/$PORT/assets/"
+cp -r "port/$PORT/licenses" "dist/build/$PORT/"
+[ -f "port/$PORT/screenshot.png" ] && cp "port/$PORT/screenshot.png" "dist/build/$PORT/" || true
+cp port/README.md "dist/build/$PORT/"
+[ -f port/gameinfo.xml ] && cp port/gameinfo.xml "dist/build/$PORT/" || true
 
-chmod +x dist/build/RGSMP.sh dist/build/rgsmp/rgsmp.*
+chmod +x "dist/build/$LAUNCHER" "dist/build/$PORT/$PORT".*
 
 cd dist/build
-rm -f ../rgsmp.zip
-zip -r ../rgsmp.zip RGSMP.sh rgsmp > /dev/null
+rm -f "../$PORT.zip"
+zip -r "../$PORT.zip" "$LAUNCHER" "$PORT" > /dev/null
 cd ..
-echo "== done: dist/rgsmp.zip =="
-ls -la rgsmp.zip
+echo "== done: dist/$PORT.zip =="
+ls -la "$PORT.zip"

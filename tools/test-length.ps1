@@ -1,3 +1,5 @@
+param([string]$Exe = 'build\rg808.exe')
+
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path test | Out-Null
 Remove-Item -Recurse -Force test\lenlib -ErrorAction SilentlyContinue
@@ -19,13 +21,13 @@ Set-Content test\lenlib\len-old.txt $base
 
 # Persistence, clamping, live clock and song snapshot checks.
 $env:RG808_CONF = 'test\lenlib'
-& build\rg808.exe --test-length
+& $Exe --test-length
 if ($LASTEXITCODE -ne 0) { throw 'pattern length self-test failed' }
 
 # Bounce frame-count math: sps = 44100*60/(120*4) = 5512.5 frames per 16th.
 function Bounce([string]$name, [int]$loops) {
   $env:RG808_CONF = "test\lenlib\$name.txt"
-  & build\rg808.exe --bounce "test\len-$name-$loops.wav" --loops $loops | Out-Null
+  & $Exe --bounce "test\len-$name-$loops.wav" --loops $loops | Out-Null
   return ((Get-Item "test\len-$name-$loops.wav").Length - 44) / 4
 }
 function Expected([int]$steps, [int]$loops) {
@@ -52,7 +54,7 @@ Copy-Item test\lenlib\len4.txt test\lenlib\patterns\001.txt
 (Get-Content test\lenlib\len8.txt) -replace '^BPM .*','BPM 125.00' | Set-Content test\lenlib\patterns\002.txt
 Set-Content test\lenlib\song.txt @('RG808SONG1','LOOP 0','BAR 001','BAR 002')
 $env:RG808_CONF = 'test\lenlib'
-& build\rg808.exe --song --bounce test\len-song.wav | Out-Null
+& $Exe --song --bounce test\len-song.wav | Out-Null
 $env:RG808_CONF = $null
 $songFrames = ((Get-Item test\len-song.wav).Length - 44) / 4
 $songExpected = [long](5512.5 * 4 + 5292 * 8) + 88200
@@ -60,7 +62,7 @@ if ($songFrames -eq $songExpected) { 'PASS: song export follows per-bar lengths'
 
 # Length editor screenshot.
 $env:RG808_CONF = 'test\lenlib\len8.txt'
-& build\rg808.exe --screenshot test\len-editor.bmp --mode length | Out-Null
+& $Exe --screenshot test\len-editor.bmp --mode length | Out-Null
 $env:RG808_CONF = $null
 
 Add-Type -AssemblyName System.Drawing

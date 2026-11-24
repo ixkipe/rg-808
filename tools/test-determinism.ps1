@@ -1,3 +1,5 @@
+param([string]$Exe = 'build\rg808.exe')
+
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path test | Out-Null
 $lines = @(
@@ -9,8 +11,8 @@ $lines = @(
 )
 Set-Content test\det.txt $lines
 $env:RG808_CONF = 'test\det.txt'
-& build\rg808.exe --bounce test\d1.wav --loops 1 | Out-Null
-& build\rg808.exe --bounce test\d2.wav --loops 1 | Out-Null
+& $Exe --bounce test\d1.wav --loops 1 | Out-Null
+& $Exe --bounce test\d2.wav --loops 1 | Out-Null
 $env:RG808_CONF = $null
 $h1 = (Get-FileHash test\d1.wav -Algorithm MD5).Hash
 $h2 = (Get-FileHash test\d2.wav -Algorithm MD5).Hash

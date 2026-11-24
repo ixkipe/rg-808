@@ -1,11 +1,15 @@
-> This file contains features to be implemented,
-> and concerns only core logic changes, so everything listed here
-> applies to both the RG-808 and the RG-SMP.
-
-- [x] introduce 2 new step volume types: ghost (just barely audible) and weak (quieter than regular)
-  - [x] 4 volume types total: ghost, weak, regular, accented
-  - [x] select by holding down A on a step in the sequencer for 0.5 sec, modal window pops up with 4 volume types, select w/ D-pad
-- [x] when selecting an empty pattern in the pattern library - must create a clean pattern and switch to it
-- [x] synchronize the sequencer's playhead with the swing
-- [x] POSSIBLE BUG: check the "save pattern" functionality both in the main menu and in the pattern library menu. "save pattern" in the main menu must save the current state ONLY to the currently selected pattern, while the "save here" option in the pattern library must ONLY save to the pattern the cursor is currently at.
-  - verified: main-menu save writes only the active slot; SAVE HERE writes the cursor slot and switches to it (save-as). Regression test added.
+## v1.1 Roadmap
+- [ ] change pitch w/time stretch (-24 / +24 semitones) (shortcut: L1 + X)
+  - planned: per pattern (`PIT` lines, like the 808 `KIT` lines), rendered offline through a phase vocoder and cached by (sample, semitones) - see PLAN.md P2
+- [x] muted instruments must remain muted in exported WAV too
+  - shipped: the export engine inherits the live mute state; the export confirmation page lists the muted tracks and Y includes them on request - see PLAN.md P1
+- [ ] step-programmable sample length with start/end points (in two-place decimal percentages, e.g. start point: 5.64%, end point: 98.74%) (shortcut: L1 + B)
+  - planned: per sequencer step (16 slices per track), 0.01 % resolution - see PLAN.md P3
+- [ ] MIDI sync support via USB-OTG 
+  - only MIDI start/stop and tempo sync required
+  - only MIDI IN required
+  - must retain original sequencer length as opposed to inheriting the sequencer length via MIDI from the master device
+  - must be able to sync a single pattern as well as a looped song
+  - Anbernic RG35XX devices have a USB Type-C OTG port
+  - is it possible to, instead of the USB-OTG to USB to MIDI 5-din chain, implement MIDI Type A with USB-C to Jack 3.5 adapter, test with Roland S-1 or T-8 which also supports MIDI Type A, connect Anbernic to Roland via Jack 3.5 - 3.5 cable?
+  - answer: yes for the cable - the Roland T-8 speaks MIDI Type A on its 3.5 mm TRS jack (its manual lists BCC-1-3535 TRS/TRS and BMIDI-5-35 TRS/DIN cables), so an RG35XX acting as USB host can drive it through a "USB host to 3.5 mm Type-A MIDI" adapter. Both that route and the UM-ONE DIN chain need the same thing from the device: USB **host** mode plus a USB-MIDI driver. `tools/device/probe.sh` now checks for it - see PLAN.md P4/P5

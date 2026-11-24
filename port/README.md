@@ -64,6 +64,8 @@ not included in WAV export.
 Mute: Y toggles a performance mute for the selected track; X still auditions
 it. Muted rows are tinted and marked with a red M. Mutes apply to live and song
 playback, cut ringing hits immediately, and are not saved with the pattern.
+They also apply to the WAV export: the export confirmation page lists the
+muted tracks, and Y toggles whether they are part of the export.
 
 Sample browser (menu -> SAMPLE BROWSER, or L2+Up): browse `assets/wav`
 recursively. Directories are entered with A; WAV files are assigned to the
