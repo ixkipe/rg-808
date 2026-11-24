@@ -215,12 +215,14 @@ extends M9; M11 is independent of the core split; M12 precedes M13.
     `Y:MUTE`. Y keeps auditioning in kit/ratchet mode and keeps its old
     behaviour elsewhere.
   - [x] Mutes are deliberately not persisted (performance state): they survive
-    pattern loads and song bars but reset on restart, and do not affect WAV
-    export.
+    pattern loads and song bars but reset on restart. Since v1.1 they also
+    reach the WAV export: the export engine inherits the live mute state, so a
+    muted track stays muted in the bounce, and the export confirmation page can
+    include the muted tracks on request.
   - [x] Verified by `tools/test-mute.ps1` / `--test-mute` (mute silences live and
     song playback, cuts ringing voices, preview still sounds, UI toggle and KIT
-    audition alias) plus a `--mode mute` screenshot; M6–M9/length/shortcut
-    suites still pass.
+    audition alias, the export keeps muted tracks silent) plus a `--mode mute`
+    screenshot; M6–M9/length/shortcut suites still pass.
 - [x] **M11 — Performance punch-in FX** *(todo: MPC/Gross Beat-style held
   effects on R1; independent of the core/machine split)*
   - [x] **M11.0 — Free R1 first.** Ratchet moved from `R1 + Right` to
@@ -292,6 +294,90 @@ extends M9; M11 is independent of the core split; M12 precedes M13.
   RD-707 and RD-RETRO as separate machine branches built on `core`, using
   fixed one-shot samples with accent-as-gain.
 
+## v1.1 roadmap
+
+Derived from the v1.1 roadmap in `todo.md`. Every item is a **core** change:
+the shared engine, persistence, DSP and the new pages live in `src/core/`
+(the new pages in `src/core/views/`), and the RG-808 / RG-SMP shells only wire
+the shortcuts and the machine-specific labels. Phases land on `core` first,
+then merge into `master` (RG-808) and `sampler` (RG-SMP).
+
+**Decisions taken (2026-11-24)**
+
+- **Pitch is per pattern**, stored as `PIT` lines exactly like the 808's `KIT`
+  lines, so every song bar can carry its own pitch. The shift is rendered
+  **offline** (phase vocoder) when the value changes and cached by
+  (sample, semitones): playback costs nothing and the audio thread never
+  touches the stretcher.
+- **Sample start/end is programmed per sequencer step** (16 slices per track)
+  in two-place decimal percentages, matching the project's own use of "step"
+  for sequencer steps. The untouched track is the "no slice" case.
+- **Muted tracks stay muted in an export.** The export engine inherits the live
+  mute state; the confirmation page names the excluded tracks and can include
+  them on request.
+- **MIDI ships engine-first.** The parser, tempo lock, transport and external
+  clock land with a synthetic-stream test. Device input is gated on the
+  RG35XX acting as a **USB host** with a USB-MIDI driver, which is probed
+  before that work starts.
+
+### Phases
+
+- [x] **P0 — Groundwork**
+  - [x] Port the L2+Down export confirmation from the machine branches onto
+    `core`. It was implemented on `master`/`sampler` only, so the next merge
+    into `master` would have dropped it.
+  - [x] Fix `tools/portmaster-build/build.sh`: it still listed the pre-split
+    source layout, so the Docker release build has been broken since M12. The
+    script now builds both machines from the current layout (`MACHINE=smp` /
+    `MACHINE=808`), and `tools/package-port.ps1` follows.
+  - [x] Extend `tools/device/probe.sh` with the USB / ALSA-MIDI checks that
+    gate the MIDI device phase.
+  - [x] Add the `src/core/views/` seam: shared view context, action
+    vocabulary, shortcut-label table and export panel, so the v1.1 pages are
+    written once instead of twice. The two shells keep their palette and
+    their machine-specific label.
+  - [x] `tools/test-machines.ps1` runs the automated suites for **both**
+    shells. The 808 suites were never run on `core` before: the pattern-based
+    scripts use the RG808P1 format and silently degraded against the sampler
+    build, and the 808 `--test-mute` had a latent failure. Every
+    `tools/test-*.ps1` now takes an `-Exe` parameter, and the chunk-size
+    comparison in `--test-song` compares with a tolerance instead of
+    `memcmp` (the voice pool frees its slots at chunk ends, so the summation
+    order - and therefore the last bits - can differ).
+- [x] **P1 — Muted tracks in exports**
+  - [x] Core: `engine_copy_mute()` / `engine_muted_count()`.
+  - [x] Song export, `--song` and `--bounce` honour the mutes.
+  - [x] Export confirmation lists the excluded tracks and can include them (Y).
+  - [x] `--test-mute` covers the export path; README / CORE / port README /
+    PLAN updated (1.0 documented the opposite behaviour).
+- [ ] **P2 — Pitch ±24 semitones with time stretch** (L1+X)
+  - [ ] Core: phase vocoder (`src/core/pitch.c`) + a pitch cache keyed by
+    (sample, semitones) with a memory cap.
+  - [ ] `PIT` pattern lines, per-pattern pitch, song bars carry their own.
+  - [ ] L1+X page: ±1 semitone up/down, ±12 left/right, audition, header
+    readout.
+  - [ ] `--test-pitch`: pitch accuracy, duration preserved, round-trip.
+- [ ] **P3 — Programmable sample start/end** (L1+B)
+  - [ ] Core: voices gain start/end frame offsets; `TRM` pattern lines with
+    0.01 % resolution, per sequencer step.
+  - [ ] L1+B slice page: waveform strip, 16 step cells, two-place decimals,
+    per-step audition.
+  - [ ] `--test-trim`: slice boundaries, round-trip, bounce difference.
+- [ ] **P4 — MIDI engine**
+  - [ ] Core: `src/core/midi.c` — running-status parser, clock → BPM lock,
+    start/stop/continue, song position.
+  - [ ] Engine external-clock mode: the master supplies tempo and transport,
+    **our** pattern length and song chain stay ours.
+  - [ ] `--test-midi` drives a synthetic clock stream (no hardware needed).
+- [ ] **P5 — MIDI device input**
+  - [ ] Reader thread on `/dev/snd/midiC*D0`, MIDI SYNC page, clock badge.
+  - [ ] Only after the device probe proves USB host mode works; otherwise the
+    feature is documented as device-blocked rather than half-finished.
+  - [ ] Roland T-8 / S-1 bring-up over MIDI Type A (3.5 mm) or the DIN chain.
+- [ ] **P6 — Release 1.1**
+  - [ ] Docs (README / CORE / PLAN / SAMPLER), `port.json`, screenshots, both
+    machine packages, device smoke test.
+
 ## Current state (as of 2026-11-15)
 
 - **Version 1.0:** M1–M11 implemented, with the M12 shared-core split complete;
@@ -345,7 +431,9 @@ extends M9; M11 is independent of the core split; M12 precedes M13.
   remains the fallback for old patterns. Verified by `tools/test-m9.ps1`.
 - M10 shipped (PC): Y mutes/unmutes the selected instrument in the sequencer
   (X still auditions), with an `M` marker and immediate voice cut; mutes apply
-  to live and song playback, are not persisted, and do not affect export.
+  to live and song playback and are not persisted. Since v1.1 they also apply
+  to the WAV export (the export confirmation page can include the muted
+  tracks on request).
   Verified by `tools/test-mute.ps1` / `--test-mute`.
 - M11 shipped (PC): R1 punch-in FX layer with 1/4–1/32 stutters, rewind, gate,
   tape stop and phone filter; quantized to the next 16th, one at a time,

@@ -1,4 +1,6 @@
-$p = Start-Process build\rg808.exe -PassThru -RedirectStandardError build\live-err.txt
+param([string]$Exe = 'build\rg808.exe')
+
+$p = Start-Process $Exe -PassThru -RedirectStandardError build\live-err.txt
 Start-Sleep -Seconds 4
 if (-not $p.HasExited) { Stop-Process -Id $p.Id; 'alive after 4s -> killed (OK)' }
 else { 'exited early, code ' + $p.ExitCode }

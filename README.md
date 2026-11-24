@@ -75,6 +75,14 @@ rg808.exe --test-length                            # pattern-length checks
 rg808.exe --screenshot shot.bmp --mode sampler     # sample browser frame
 ```
 
+The core branch carries both machines, so the automated suites are run for
+both shells:
+
+```
+tools\test-machines.ps1     # headless suites for the sampler and the drum machine
+tools\test-mute.ps1         # single-machine suite (sampler build)
+```
+
 Keyboard controls on PC: arrows=dpad, Z/Enter=A, X=B, C=X(hear), Y=mute,
 Space=START, Esc/Backspace=SELECT-menu, 1/2/3/4=L1/L2/R1/R2 (hold + arrows for
 shortcuts; hold 3=R1 and press a direction or Z/X/C/Y for punch-in FX),
@@ -85,11 +93,14 @@ shortcuts; hold 3=R1 and press a direction or Z/X/C/Y for punch-in FX),
 Requires Docker Desktop (or any docker):
 ```
 docker build -t rg808build tools/portmaster-build
-docker run --rm -v ${PWD}:/src rg808build      # -> dist/rgsmp.zip
+docker run --rm -v ${PWD}:/src rg808build             # -> dist/rgsmp.zip
+docker run --rm -e MACHINE=808 -v ${PWD}:/src rg808build   # -> dist/rg808.zip
 ```
 The container cross-compiles `rgsmp.aarch64` + `rgsmp.armhf` against Debian's
 SDL2. The device ships its own `libSDL2` at runtime; both arch binaries are
-inside the zip and the launcher picks the right one.
+inside the zip and the launcher picks the right one. `MACHINE` selects the
+machine (the `core` branch builds the sampler, the `master` branch the drum
+machine).
 
 ## Installing on the device
 
@@ -147,7 +158,9 @@ directory for the session.
 **Mute**: Y toggles a performance mute for the selected track; X still
 auditions it. Muted rows are marked with a red `M`. Mutes apply to live and
 song playback, cut ringing hits immediately, and are not saved with the
-pattern.
+pattern. They also apply to the WAV export: the export confirmation page
+lists the muted tracks, and Y toggles whether they are part of the export
+(excluded by default).
 
 **Punch-in FX**: hold R1 and press a direction or face button for a momentary
 master effect. Left/Right/Up/Down are 1/4, 1/8, 1/16 and 1/32 stutter loops;

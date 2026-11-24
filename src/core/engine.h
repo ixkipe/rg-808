@@ -161,6 +161,11 @@ void engine_mix(Engine *e, float *dst, int frames); /* advance clock + fill dst 
 int engine_selftest_swing(int rate);              /* headless playhead/swing check */
 int engine_selftest_levels(int rate);             /* headless ghost/weak gain check */
 
+/* Performance mutes. The mutes are live state, so an export engine has to
+ * inherit them explicitly: a muted track must stay muted in the WAV. */
+int  engine_muted_count(const Engine *e);          /* number of muted tracks */
+void engine_copy_mute(Engine *dst, const Engine *src);
+
 /* Performance punch-in FX (R1 layer). Requests are consumed by the audio
  * thread at the next 16th-step boundary; release is immediate. */
 void engine_punch_trigger(Engine *e, int effect);

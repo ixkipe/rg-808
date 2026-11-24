@@ -5,6 +5,7 @@
 #include "samplebank.h"
 #include "smp_machine.h"
 #include "song.h"
+#include "views/view_keys.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -29,6 +30,12 @@ const char *machine_id(void) { return "smp"; }
 const char *machine_name(void) { return "RG-SMP"; }
 const char *machine_window_title(void) { return "RG-SMP"; }
 const char *machine_pattern_magic(void) { return "RGSMP1"; }
+
+const char *machine_shortcut_label(int sh, int dir)
+{
+    if (sh == RGSH_L2 && dir == RGV_UP) return "SAMPLE BROWSER";
+    return NULL;
+}
 
 void machine_init_engine(Engine *e)
 {

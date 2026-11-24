@@ -1,5 +1,9 @@
-# Cross-toolchain build environment for the RG-SMP PortMaster port.
+# Cross-toolchain build environment for the PortMaster ports (RG-SMP / RG-808).
 # Builds armhf + aarch64 binaries linked against the system SDL2 on the device.
+#
+#   docker build -t rg808build tools/portmaster-build
+#   docker run --rm -v ${PWD}:/src rg808build              # -> dist/rgsmp.zip
+#   docker run --rm -e MACHINE=808 -v ${PWD}:/src rg808build  # -> dist/rg808.zip
 FROM debian:bookworm
 
 RUN dpkg --add-architecture armhf && dpkg --add-architecture arm64 && \
@@ -12,4 +16,5 @@ RUN dpkg --add-architecture armhf && dpkg --add-architecture arm64 && \
 WORKDIR /src
 COPY build.sh /build.sh
 RUN chmod +x /build.sh
+ENV MACHINE=smp
 CMD ["/build.sh"]

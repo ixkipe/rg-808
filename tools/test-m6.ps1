@@ -1,3 +1,5 @@
+param([string]$Exe = 'build\rg808.exe')
+
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path test | Out-Null
 
@@ -17,7 +19,7 @@ Set-Content test\confC.txt ($base + 'RCH SD 0000000000000000' + 'SWING 60')
 $results = @()
 foreach ($n in 'A','B','C') {
   $env:RG808_CONF = "test\conf$n.txt"
-  & build\rg808.exe --bounce "test\bounce$n.wav" --loops 2 | Out-Null
+  & $Exe --bounce "test\bounce$n.wav" --loops 2 | Out-Null
   $h = (Get-FileHash "test\bounce$n.wav" -Algorithm MD5).Hash
   $s = (Get-Item "test\bounce$n.wav").Length
   $results += "$n : $s bytes : $h"
@@ -34,7 +36,7 @@ if (($sizes[0] -eq $sizes[1]) -and ($sizes[1] -eq $sizes[2])) { 'PASS: frame gri
 
 # screenshot of RCH mode with rolls present
 $env:RG808_CONF = 'test\confB.txt'
-& build\rg808.exe --screenshot test\shot-rch.bmp --mode rch | Out-Null
+& $Exe --screenshot test\shot-rch.bmp --mode rch | Out-Null
 Add-Type -AssemblyName System.Drawing
 $img = [System.Drawing.Image]::FromFile((Resolve-Path 'test\shot-rch.bmp'))
 $img.Save((Join-Path (Get-Location) 'test\shot-rch.png'), [System.Drawing.Imaging.ImageFormat]::Png)
