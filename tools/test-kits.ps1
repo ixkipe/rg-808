@@ -1,3 +1,5 @@
+param([string]$Exe = 'build\rg808.exe')
+
 $ErrorActionPreference = 'Stop'
 function Make-Conf($path, $kitBd) {
   $l = @('RG808P1','BPM 120.00',
@@ -11,9 +13,9 @@ function Make-Conf($path, $kitBd) {
 Make-Conf 'test\conf-bd3.txt' 3
 Make-Conf 'test\conf-bd12.txt' 12
 $env:RG808_CONF = 'test\conf-bd3.txt'
-& build\rg808.exe --bounce test\bd3.wav --loops 1 | Out-Null
+& $Exe --bounce test\bd3.wav --loops 1 | Out-Null
 $env:RG808_CONF = 'test\conf-bd12.txt'
-& build\rg808.exe --bounce test\bd12.wav --loops 1 | Out-Null
+& $Exe --bounce test\bd12.wav --loops 1 | Out-Null
 $env:RG808_CONF = $null
 
 $h1 = (Get-FileHash test\bd3.wav -Algorithm MD5).Hash

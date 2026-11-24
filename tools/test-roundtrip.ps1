@@ -1,3 +1,5 @@
+param([string]$Exe = 'build\rg808.exe')
+
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path test | Out-Null
 Remove-Item -Recurse -Force test\rt-load, test\rt-empty -ErrorAction SilentlyContinue
@@ -25,13 +27,13 @@ Set-Content -Path test\rt-load\pattern.txt -Value $lines
 # First run must migrate the legacy file into slot 001 and render it.
 # sps = 44100*60/(90.5*4) = 7309.39; total = 7309.39*32 + 8192 = 242092 frames
 $env:RG808_CONF = 'test\rt-load'
-& build\rg808.exe --bounce test\rt-load.wav --loops 2 | Out-Null
+& $Exe --bounce test\rt-load.wav --loops 2 | Out-Null
 $env:RG808_CONF = $null
 
 # Empty conf dir: no slot and no legacy file -> built-in demo at 120 BPM.
 # sps = 5512.5; total = 5512.5*32 + 8192 = 184592 frames
 $env:RG808_CONF = 'test\rt-empty'
-& build\rg808.exe --bounce test\rt-demo.wav --loops 2 | Out-Null
+& $Exe --bounce test\rt-demo.wav --loops 2 | Out-Null
 $env:RG808_CONF = $null
 
 $loadFrames = ((Get-Item test\rt-load.wav).Length - 44) / 4

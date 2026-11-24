@@ -106,6 +106,20 @@ int wav_load(const char *path, int target_rate, WavAudio *out)
     return 0;
 }
 
+/* Peak amplitude of a WAV file, 0.0 when it cannot be read. */
+float wav_peak(const char *path)
+{
+    WavAudio w;
+    if (wav_load(path, 44100, &w) != 0) return 0.0f;
+    float peak = 0.0f;
+    for (int i = 0; i < w.frames; i++) {
+        float v = w.data[i] < 0.0f ? -w.data[i] : w.data[i];
+        if (v > peak) peak = v;
+    }
+    free(w.data);
+    return peak;
+}
+
 static void put_u32le(unsigned char *p, unsigned int v)
 {
     p[0] = (unsigned char)(v & 0xff);

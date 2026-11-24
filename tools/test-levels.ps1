@@ -1,3 +1,5 @@
+param([string]$Exe = 'build\rg808.exe')
+
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path test | Out-Null
 
@@ -6,9 +8,9 @@ $conf = 'test\levels-conf'
 Remove-Item -Recurse -Force $conf -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $conf | Out-Null
 $env:RG808_CONF = $conf
-& build\rg808.exe --test-levels
+& $Exe --test-levels
 $rc = $LASTEXITCODE
-& build\rg808.exe --screenshot test\levels.bmp --mode vol | Out-Null
+& $Exe --screenshot test\levels.bmp --mode vol | Out-Null
 $env:RG808_CONF = $null
 if ($rc -ne 0) { throw 'step level self-test failed' }
 

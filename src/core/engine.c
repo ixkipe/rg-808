@@ -182,6 +182,22 @@ void engine_kill_all_voices(Engine *e)
     if (e) e->kill_all_voices = 1;
 }
 
+int engine_muted_count(const Engine *e)
+{
+    int n = 0;
+    if (!e) return 0;
+    for (int t = 0; t < N_TRACKS; t++)
+        if (e->mute[t]) n++;
+    return n;
+}
+
+void engine_copy_mute(Engine *dst, const Engine *src)
+{
+    if (!dst || !src) return;
+    for (int t = 0; t < N_TRACKS; t++)
+        dst->mute[t] = src->mute[t];
+}
+
 void engine_punch_trigger(Engine *e, int effect)
 {
     if (e) perf_fx_request(e->perf_fx, effect);

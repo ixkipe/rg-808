@@ -1,8 +1,10 @@
+param([string]$Exe = 'build\rg808.exe')
+
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path test | Out-Null
 
 # Headless check of the shoulder -> menu mapping.
-& build\rg808.exe --test-shortcuts
+& $Exe --test-shortcuts
 if ($LASTEXITCODE -ne 0) { throw 'shoulder shortcut test failed' }
 
 # Render the four hint overlays for visual inspection.
@@ -11,7 +13,7 @@ Remove-Item -Recurse -Force $conf -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $conf | Out-Null
 $env:RG808_CONF = $conf
 foreach ($m in 'l1','l2','r1','r2') {
-  & build\rg808.exe --screenshot "test\shortcut-$m.bmp" --mode $m | Out-Null
+  & $Exe --screenshot "test\shortcut-$m.bmp" --mode $m | Out-Null
 }
 $env:RG808_CONF = $null
 
