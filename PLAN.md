@@ -1,16 +1,16 @@
 # RG-808 Development Plan
 
-**Current version: 1.0** (2026-11-15). M1–M11 are implemented (including the
+**Current version: 1.0** (2026-11-15). M1â€“M11 are implemented (including the
 M12 shared-core split), both ARM cross-builds pass the automated suites, and
 RG-808/RG-SMP 1.0 were validated on a physical RG35XX SP.
 
 Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster).
-1–16-step sequencer, single pattern, 11 classic voices, per-step accents.
+1â€“16-step sequencer, single pattern, 11 classic voices, per-step accents.
 
 ## Release 1.0 (2026-11-15)
 
 RG-808 and RG-SMP ship together as version 1.0. Both use the shared `core`
-branch and the same C11/SDL2 stack. The 1.0 release includes the full M1–M11
+branch and the same C11/SDL2 stack. The 1.0 release includes the full M1â€“M11
 feature set: the pattern library, song chains with timestamped WAV export,
 per-pattern effects, swing/ratchets/step levels, per-track mute, R1 punch-in FX
 and the L2+Down export shortcut. Both systems were exercised on a physical
@@ -21,78 +21,78 @@ RG35XX SP before release.
 | Layer | Choice | Notes |
 |---|---|---|
 | Language | C11, CMake + Ninja | MinGW on Windows for dev, gcc-12 cross in Docker for release |
-| Video/input | SDL2 (2.32 headers on PC, Debian 2.26 on cross, device runtime SDL2) | software canvas → one streaming texture; works on fbcon/KMS |
+| Video/input | SDL2 (2.32 headers on PC, Debian 2.26 on cross, device runtime SDL2) | software canvas â†’ one streaming texture; works on fbcon/KMS |
 | Audio | SDL2 audio callback + hand-written 48-voice mixer | sequencer clock inside the callback = sample-accurate steps |
 | Font | font8x8 (public domain, vendored) | no SDL2_ttf dependency |
 | Persistence | plain-text `conf/pattern.txt` + 5 s autosave | PortMaster `conf/` folder convention |
 | Packaging | PortMaster "new port structure": `RG808.sh` + `rg808/` in a zip | `port.json` v4, dual arch `aarch64` + `armhf` (`${DEVICE_ARCH}`) |
-| Kit | variant families from the "Roland TR-808" pack shipped as `<id>NN.wav` (bd/sd 16, toms 7, ch 5, oh 3, cy 6, cp 3, cl/cb 2 — 74 files) | selectable per voice in kit mode; mapping in `tools/prepare-assets.ps1`, defaults in `src/engine.c` |
+| Kit | variant families from the "Roland TR-808" pack shipped as `<id>NN.wav` (bd/sd 16, toms 7, ch 5, oh 3, cy 6, cp 3, cl/cb 2 â€” 74 files) | selectable per voice in kit mode; mapping in `tools/prepare-assets.ps1`, defaults in `src/engine.c` |
 
-Key device facts: RG35XX SP = Allwinner H700 (4× Cortex-A53), 1 GB RAM,
-640×480 screen, D-pad + ABXY + L/R + START/SELECT, no Wi-Fi (offline installs
+Key device facts: RG35XX SP = Allwinner H700 (4Ã— Cortex-A53), 1 GB RAM,
+640Ã—480 screen, D-pad + ABXY + L/R + START/SELECT, no Wi-Fi (offline installs
 matter). muOS integrates PortMaster; ports live in `<card>/ports/<name>/`,
 launch shims in `<roms>/PORTS/`, port logs in `ports/rg808/log.txt`.
 
 ## Milestones
 
-- [x] **M0 — Toolchain & device probe** *(toolchain and device probe complete for 1.0)*
+- [x] **M0 â€” Toolchain & device probe** *(toolchain and device probe complete for 1.0)*
   - [x] Windows native toolchain: MinGW + CMake + vendored SDL2/MinGW + font8x8 fetch script
   - [x] Docker cross-build (`tools/portmaster-build`): `rg808.aarch64` + `rg808.armhf`, zip assembly inside container
   - [x] `tools/device/probe.sh` written (kernel, arch, glibc, SDL2, ALSA, paths)
-  - [x] Run probe on the device, file back the output → pin glibc + SDL2 + storage paths
-- [x] **M1 — Engine (PC)** — WAV→float loader w/ resample; voice mixer; sample-accurate
-  16-step clock; accents (off/on/accent gain); BPM 4–250; `--bounce out.wav` offline
+  - [x] Run probe on the device, file back the output â†’ pin glibc + SDL2 + storage paths
+- [x] **M1 â€” Engine (PC)** â€” WAVâ†’float loader w/ resample; voice mixer; sample-accurate
+  16-step clock; accents (off/on/accent gain); BPM 4â€“250; `--bounce out.wav` offline
   render verified (timing math checked at 90.5 and 120 BPM; soft-clip curve in place).
-- [x] **M2 — UI (PC)** — 640×480 canvas UI: track labels + 16-cell grid, cursor, LED
+- [x] **M2 â€” UI (PC)** â€” 640Ã—480 canvas UI: track labels + 16-cell grid, cursor, LED
   playhead row, beat markers, tempo header, status bar, MENU + TEMPO + KIT modes,
   on/off/accent visual hierarchy. Verified via `--screenshot` (see
   `port/rg808/screenshot.png`) and a stable live run.
-- [x] **M3 — Device port & parity** *(validated on SP for 1.0)*
+- [x] **M3 â€” Device port & parity** *(validated on SP for 1.0)*
   - [x] Dual-arch binaries in zip; `RG808.sh` launch script follows the PortMaster
     template (control.txt, get_controls, LD_LIBRARY_PATH `libs.${DEVICE_ARCH}`,
     gptokeyb kill-daemon, `pm_platform_helper`/`pm_finish`) **and** degrades
     gracefully to a manual install without PortMaster
   - [x] `tools/device/install.sh` + `tools/deploy.ps1` (SSH/SFTP path)
-  - [x] First real-device launch (2026-11-06): app runs — video + sound + install
+  - [x] First real-device launch (2026-11-06): app runs â€” video + sound + install
     path confirmed working end-to-end
   - [x] D-pad double-fire fixed (SDL emitted controller-button AND raw-hat events
     for the same press; raw joystick events now suppressed for mapped controllers,
-    mapping is checked up front for dpad buttons) — validated on device
+    mapping is checked up front for dpad buttons) â€” validated on device
   - [x] Controls retested; audio latency/cleanliness and A/B/X/Y/START/SELECT/L/R
     mappings validated on device in 1.0
   - [x] Audio period size / `samples` validated on hardware; no retune needed for 1.0
-- [x] **M4 — Persistence & polish** — save/load `pattern.txt` round-trip verified;
+- [x] **M4 â€” Persistence & polish** â€” save/load `pattern.txt` round-trip verified;
   kit selections persisted as `KIT <track> <n>` lines (old kit-less files load with
-  defaults — confirmed against a real save); autosave (5 s after edits) + save on
+  defaults â€” confirmed against a real save); autosave (5 s after edits) + save on
   quit; built-in demo groove; master gain + soft-clip. Kit audio path verified by
-  `tools/test-kits.ps1` (same pattern, variant 3 vs 12 → different bounce output).
-- [x] **M5 — Packaging** *(1.0 package shipped)*
-  - [x] `dist/rg808.zip` ≈ 3.0 MB: launcher + binaries + 74-variant kit + licenses +
+  `tools/test-kits.ps1` (same pattern, variant 3 vs 12 â†’ different bounce output).
+- [x] **M5 â€” Packaging** *(1.0 package shipped)*
+  - [x] `dist/rg808.zip` â‰ˆ 3.0 MB: launcher + binaries + 74-variant kit + licenses +
     README + gameinfo.xml + screenshot; layout matches `port.json` `items: ["RG808.sh","rg808"]`
   - [x] Reproducible build: `docker build -t rg808build tools/portmaster-build` then
     `docker run --rm -v ${PWD}:/src rg808build`; Windows fallback `tools/package-port.ps1`
-  - [ ] Replace screenshot with a real device capture (4:3 640×480)
+  - [ ] Replace screenshot with a real device capture (4:3 640Ã—480)
   - [ ] Confirm sample-pack licence terms before any public release (`port/rg808/licenses/ASSETS.txt`)
   - [ ] Optional: upstream PR to PortsMaster/PortMaster-New (requires their Discord
     testing thread + multi-CFW testing; not needed for personal use)
 
 ## v2 feature milestones (grouped from `todo.md`)
 
-Ordered so each layer builds on a stable base: step model → pattern storage →
-song assembly → output DSP. M6 and M9 are independent; M8 requires M7; M9.5
+Ordered so each layer builds on a stable base: step model â†’ pattern storage â†’
+song assembly â†’ output DSP. M6 and M9 are independent; M8 requires M7; M9.5
 extends M9; M11 is the performance FX layer.
 
-- [x] **M6 — Timing & feel** *(swing + ratchets; validated on device in 1.0)*
-  - [x] **Swing/shuffle**: one global amount (0–100 % of a 16th), delays every even
+- [x] **M6 â€” Timing & feel** *(swing + ratchets; validated on device in 1.0)*
+  - [x] **Swing/shuffle**: one global amount (0â€“100 % of a 16th), delays every even
     16th step; applied in the clock math (`next_step += sps` becomes
-    alternate long/short). UI: menu → SWING value page (TEMPO-style editor).
+    alternate long/short). UI: menu â†’ SWING value page (TEMPO-style editor).
     Implementation note: hit offset via voice delays; boundaries stay on the
     straight grid (loop length unchanged, verified by bounce byte size).
-  - [x] **Ratchets**: per-step repeat mode — 1/2 (2 hits), 1/3 (3 hits), 1/4 (4 hits),
+  - [x] **Ratchets**: per-step repeat mode â€” 1/2 (2 hits), 1/3 (3 hits), 1/4 (4 hits),
     and flam (2 hits, second at ~14 ms offset, quieter). Third step dimension
     `unsigned char rch[N_TRACKS][N_STEPS]` + sub-hit scheduling (`fire_sched`);
-    roll hits at full level (decay shaping = later polish). MAX_VOICES raised 48→64.
-  - [x] UI: RATCHET overlay mode (menu → RATCHET NOTES; 16 columns = steps, digit
+    roll hits at full level (decay shaping = later polish). MAX_VOICES raised 48â†’64.
+  - [x] UI: RATCHET overlay mode (menu â†’ RATCHET NOTES; 16 columns = steps, digit
     drawn inside set cells in both edit and ratchet views).
   - [x] Persistence: `RCH <label> <16 chars 0..4>` lines + `SWING <n>`; old files
     default to none (backward compatible, same trick as KIT lines).
@@ -100,15 +100,15 @@ extends M9; M11 is the performance FX layer.
     preserved) + `--mode rch` screenshot. During testing **fixed a real bug**:
     uninitialized pad bytes in the WAV header made `--bounce` files
     non-deterministic (only affects export tooling, not live playback).
-  - [ ] Device CPU spot-check at 250 BPM with 4× rolls on all 11 tracks.
-- [x] **M7 — Pattern library** *(todo: save up to 200 patterns)*
+  - [x] Device CPU spot-check at 250 BPM with 4Ã— rolls on all 11 tracks passed in 1.0.
+- [x] **M7 â€” Pattern library** *(todo: save up to 200 patterns)*
   - [x] Storage: `conf/patterns/NNN.txt` (same file format per pattern) +
-    `conf/patterns/index.txt` (slot → name, plus the active slot); atomic
+    `conf/patterns/index.txt` (slot â†’ name, plus the active slot); atomic
     writes (temp + fsync + rename) against SD power-loss.
   - [x] Import migration of the legacy single `pattern.txt` into slot 001 on
     first run (only when the library has no pattern files; later edits to the
     legacy file never overwrite slot 001).
-  - [x] UI: PATTERN browser — numbered list with names, 12 slots/page;
+  - [x] UI: PATTERN browser â€” numbered list with names, 12 slots/page;
     load (A), SELECT actions (SAVE HERE, COPY ACTIVE HERE, RENAME, DELETE),
     D-pad letter-picker rename (16 chars), active-slot marker in the header.
   - [x] Autosave retargets to the active slot; slot number + name shown in
@@ -116,14 +116,14 @@ extends M9; M11 is the performance FX layer.
   - [x] Verified by `tools/test-m7.ps1` (migration, no re-import, save/reload
     bit-identical, index active/name, no `.tmp` leftovers) plus browser and
     rename screenshots; existing M6/kit/round-trip tests still pass.
-- [x] **M8 — Song mode** *(todo: chain up to 512 patterns; save song as WAV) — requires M7*
+- [x] **M8 â€” Song mode** *(todo: chain up to 512 patterns; save song as WAV) â€” requires M7*
   - [x] Song data: ordered chain of pattern slots (1 bar per entry, up to 512
     entries) in `conf/song.txt`; per-pattern BPM/swing/length/kit/ratchets
     apply on each bar switch.
   - [x] Engine: immutable `SongSet` snapshot arrays prepared by the UI thread
     (two buffers), audio thread advances the snapshot pointer at every bar
     boundary; per-bar BPM recomputed for the next step so switches are gapless.
-  - [x] UI: SONG page — bar list with pattern names, picker, insert/delete/
+  - [x] UI: SONG page â€” bar list with pattern names, picker, insert/delete/
     move, play-from-here, loop toggle, jump-to-playing-bar, save/clear.
   - [x] **WAV export**: streaming renderer writes chunks straight to disk
     (header patched at close), progress bar, 44.1 kHz/16 stereo, one pass plus
@@ -132,13 +132,13 @@ extends M9; M11 is the performance FX layer.
     length math, non-loop end, loop wrap, UI actions, 250 BPM bar switch,
     first-bar bit-exact vs a normal pattern bounce) plus song/action/export
     screenshots.
-- [x] **M8.5 — Pattern length** *(pre-M9; per-pattern 1–16 steps)*
+- [x] **M8.5 â€” Pattern length** *(pre-M9; per-pattern 1â€“16 steps)*
   - [x] Engine: `length` in the live engine and in every `PatternSnapshot`;
     the 16th clock wraps on the pattern length, and song bars advance on
     each bar's own length. Bounce length math uses it too.
-  - [x] Persistence: `LEN <n>` line per pattern, clamped to 1–16; files from
+  - [x] Persistence: `LEN <n>` line per pattern, clamped to 1â€“16; files from
     older builds (no `LEN`) load as 16 steps.
-  - [x] UI: menu → PATTERN LENGTH (also L1+Up), up/down ±1 and left/right ±4;
+  - [x] UI: menu â†’ PATTERN LENGTH (also L1+Up), up/down Â±1 and left/right Â±4;
     steps past the end are shown dimmed with an end marker, and the edit
     cursor wraps inside the active length. Header shows `LEN nn` (and the
     current song bar's length while playing a song).
@@ -146,12 +146,12 @@ extends M9; M11 is the performance FX layer.
     legacy default, clamps, live clock wrap, per-bar song length/end) and
     bounce/song-export frame counts for LEN 1/4/8/16 plus the length-editor
     screenshot.
-- [x] **M9 — Effects** *(todo: compression/overdrive/bitcrusher — all selectable;
-  flanger/phaser — both selectable; delay; reverb) — independent of M6–M8*
+- [x] **M9 â€” Effects** *(todo: compression/overdrive/bitcrusher â€” all selectable;
+  flanger/phaser â€” both selectable; delay; reverb) â€” independent of M6â€“M8*
   - [x] Scope: master chain
-    `drive → modulation → delay → reverb → master` (fixed order, per-stage
+    `drive â†’ modulation â†’ delay â†’ reverb â†’ master` (fixed order, per-stage
     on/off + params), float.
-  - [x] Drive slot is selectable: bitcrusher (4–16 bits + 1–32× sample-and-hold),
+  - [x] Drive slot is selectable: bitcrusher (4â€“16 bits + 1â€“32Ã— sample-and-hold),
     overdrive (tanh drive/mix), or compression (stereo-linked peak compressor
     with threshold/ratio/makeup).
   - [x] Modulation slot is selectable: flanger (LFO 1-tap delay) or phaser
@@ -160,12 +160,12 @@ extends M9; M11 is the performance FX layer.
     retuned after listening feedback: the coefficient sweeps the audible
     midrange and the wet path is compensated for feedback boost, so max
     settings no longer turn into a clipped overdrive.
-  - [x] Delay: stereo circular buffer, 20–4000 ms free-running or tempo-synced
+  - [x] Delay: stereo circular buffer, 20â€“4000 ms free-running or tempo-synced
     to 1/4, 1/8, 1/16, 1/4T, 1/8T, 1/16T, 4D, 8D and 16D. Sync follows the live
     tempo or the current song bar's BPM.
   - [x] Reverb: 4 damped parallel combs + 2 series allpasses (room/damp/mix).
   - [x] Per-voice sends remain out of scope.
-  - [x] UI: menu → EFFECTS shows only the rows relevant to the selected drive/
+  - [x] UI: menu â†’ EFFECTS shows only the rows relevant to the selected drive/
     modulation algorithms; A toggles master/stages, left/right adjusts the
     selected value, B returns.
   - [x] Real-time safety: effect buffers are heap-allocated per engine; with
@@ -176,7 +176,7 @@ extends M9; M11 is the performance FX layer.
     each stage changes audio, all nine delay divisions resolve correctly) plus
     the FX page screenshot. Device CPU spot-check at 128-frame periods with all
     stages on passed in 1.0.
-- [x] **M9.5 — Per-pattern effects** *(follow-up to M9)*
+- [x] **M9.5 â€” Per-pattern effects** *(follow-up to M9)*
   - [x] Data: `FxSettings` now lives in `PatternSnapshot`; each pattern file
     carries `FX ...` lines; `song_build_set()` carries them per bar. The engine
     applies the incoming snapshot's settings at every bar boundary and on a
@@ -200,7 +200,7 @@ extends M9; M11 is the performance FX layer.
   - [x] Verified by `tools/test-m9.ps1` / `--test-fx` (pattern FX round-trip,
     legacy fallback, per-bar song FX, per-pattern bounce differences, synced
     delay timing, bit-identical bypass). Device CPU spot-check passed in 1.0.
-- [x] **M10 — Performance mute** *(part of the old per-track volume/mute
+- [x] **M10 â€” Performance mute** *(part of the old per-track volume/mute
   backlog; per-track volume remains open)*
   - [x] Engine: `mute[N_TRACKS]` global performance state, checked by the live
     and song step schedulers; `mute_kill_mask` lets the audio thread cut voices
@@ -210,15 +210,17 @@ extends M9; M11 is the performance FX layer.
     `Y:MUTE`. Y keeps auditioning in kit/ratchet mode and keeps its old
     behaviour elsewhere.
   - [x] Mutes are deliberately not persisted (performance state): they survive
-    pattern loads and song bars but reset on restart, and do not affect WAV
-    export.
+    pattern loads and song bars but reset on restart. Since v1.1 they also
+    reach the WAV export: the export engine inherits the live mute state, so a
+    muted track stays muted in the bounce, and the export confirmation page can
+    include the muted tracks on request.
   - [x] Verified by `tools/test-mute.ps1` / `--test-mute` (mute silences live and
     song playback, cuts ringing voices, preview still sounds, UI toggle and KIT
-    audition alias) plus a `--mode mute` screenshot; M6–M9/length/shortcut
-    suites still pass.
-- [x] **M11 — Performance punch-in FX** *(todo: MPC/Gross Beat-style held
+    audition alias, the export keeps muted tracks silent) plus a `--mode mute`
+    screenshot; M6â€“M9/length/shortcut suites still pass.
+- [x] **M11 â€” Performance punch-in FX** *(todo: MPC/Gross Beat-style held
   effects on R1)*
-  - [x] **M11.0 — Free R1 first.** Ratchet moved from `R1 + Right` to
+  - [x] **M11.0 â€” Free R1 first.** Ratchet moved from `R1 + Right` to
     `L1 + Down`; kit moved from `R1 + Left` to `L2 + Up`. Shortcut map, hint
     overlays, tests, README and port README updated. R1 is now reserved for
     the punch-in layer.
@@ -238,7 +240,7 @@ extends M9; M11 is the performance FX layer.
     - **1/4 rewind loop**: the 1/4 slice played backwards with linear
       interpolation.
     - **1/16 gate**: smoothed square volume gate at 1/16.
-    - **Tape stop**: the live ring is read at a rate ramping 1.0 → 0 over
+    - **Tape stop**: the live ring is read at a rate ramping 1.0 â†’ 0 over
       **one 1/8 note at the trigger tempo** (250 ms at 120 BPM), with
       interpolation, a 6 kHz low-pass and a level fade to silence.
     - **Phone-like sound**: RBJ resonant band-pass at 1.2 kHz, Q = 2.5.
@@ -296,20 +298,105 @@ extends M9; M11 is the performance FX layer.
     validated on a physical RG35XX SP.
   - [ ] Post-1.0: add a core headless synthetic-machine test.
 
+## v1.1 roadmap
+
+Derived from the v1.1 roadmap in `todo.md`. Every item is a **core** change:
+the shared engine, persistence, DSP and the new pages live in `src/core/`
+(the new pages in `src/core/views/`), and the RG-808 / RG-SMP shells only wire
+the shortcuts and the machine-specific labels. Phases land on `core` first,
+then merge into `master` (RG-808) and `sampler` (RG-SMP).
+
+**Decisions taken (2026-11-24)**
+
+- **Pitch is per pattern**, stored as `PIT` lines exactly like the 808's `KIT`
+  lines, so every song bar can carry its own pitch. The shift is rendered
+  **offline** (phase vocoder) when the value changes and cached by
+  (sample, semitones): playback costs nothing and the audio thread never
+  touches the stretcher.
+- **Sample start/end is programmed per sequencer step** (16 slices per track)
+  in two-place decimal percentages, matching the project's own use of "step"
+  for sequencer steps. The untouched track is the "no slice" case.
+- **Muted tracks stay muted in an export.** The export engine inherits the live
+  mute state; the confirmation page names the excluded tracks and can include
+  them on request.
+- **MIDI ships engine-first.** The parser, tempo lock, transport and external
+  clock land with a synthetic-stream test. Device input is gated on the
+  RG35XX acting as a **USB host** with a USB-MIDI driver, which is probed
+  before that work starts.
+
+### Phases
+
+- [x] **P0 ΓÇö Groundwork**
+  - [x] Port the L2+Down export confirmation from the machine branches onto
+    `core`. It was implemented on `master`/`sampler` only, so the next merge
+    into `master` would have dropped it.
+  - [x] Fix `tools/portmaster-build/build.sh`: it still listed the pre-split
+    source layout, so the Docker release build has been broken since M12. The
+    script now builds both machines from the current layout (`MACHINE=smp` /
+    `MACHINE=808`), and `tools/package-port.ps1` follows.
+  - [x] Extend `tools/device/probe.sh` with the USB / ALSA-MIDI checks that
+    gate the MIDI device phase.
+  - [x] Add the `src/core/views/` seam: shared view context, action
+    vocabulary, shortcut-label table and export panel, so the v1.1 pages are
+    written once instead of twice. The two shells keep their palette and
+    their machine-specific label.
+  - [x] `tools/test-machines.ps1` runs the automated suites for **both**
+    shells. The 808 suites were never run on `core` before: the pattern-based
+    scripts use the RG808P1 format and silently degraded against the sampler
+    build, and the 808 `--test-mute` had a latent failure. Every
+    `tools/test-*.ps1` now takes an `-Exe` parameter, and the chunk-size
+    comparison in `--test-song` compares with a tolerance instead of
+    `memcmp` (the voice pool frees its slots at chunk ends, so the summation
+    order - and therefore the last bits - can differ).
+- [x] **P1 ΓÇö Muted tracks in exports**
+  - [x] Core: `engine_copy_mute()` / `engine_muted_count()`.
+  - [x] Song export, `--song` and `--bounce` honour the mutes.
+  - [x] Export confirmation lists the excluded tracks and can include them (Y).
+  - [x] `--test-mute` covers the export path; README / CORE / port README /
+    PLAN updated (1.0 documented the opposite behaviour).
+- [ ] **P2 ΓÇö Pitch ┬▒24 semitones with time stretch** (L1+X)
+  - [ ] Core: phase vocoder (`src/core/pitch.c`) + a pitch cache keyed by
+    (sample, semitones) with a memory cap.
+  - [ ] `PIT` pattern lines, per-pattern pitch, song bars carry their own.
+  - [ ] L1+X page: ┬▒1 semitone up/down, ┬▒12 left/right, audition, header
+    readout.
+  - [ ] `--test-pitch`: pitch accuracy, duration preserved, round-trip.
+- [ ] **P3 ΓÇö Programmable sample start/end** (L1+B)
+  - [ ] Core: voices gain start/end frame offsets; `TRM` pattern lines with
+    0.01 % resolution, per sequencer step.
+  - [ ] L1+B slice page: waveform strip, 16 step cells, two-place decimals,
+    per-step audition.
+  - [ ] `--test-trim`: slice boundaries, round-trip, bounce difference.
+- [ ] **P4 ΓÇö MIDI engine**
+  - [ ] Core: `src/core/midi.c` ΓÇö running-status parser, clock ΓåÆ BPM lock,
+    start/stop/continue, song position.
+  - [ ] Engine external-clock mode: the master supplies tempo and transport,
+    **our** pattern length and song chain stay ours.
+  - [ ] `--test-midi` drives a synthetic clock stream (no hardware needed).
+- [ ] **P5 ΓÇö MIDI device input**
+  - [ ] Reader thread on `/dev/snd/midiC*D0`, MIDI SYNC page, clock badge.
+  - [ ] Only after the device probe proves USB host mode works; otherwise the
+    feature is documented as device-blocked rather than half-finished.
+  - [ ] Roland T-8 / S-1 bring-up over MIDI Type A (3.5 mm) or the DIN chain.
+- [ ] **P6 ΓÇö Release 1.1**
+  - [ ] Docs (README / CORE / PLAN / SAMPLER), `port.json`, screenshots, both
+    machine packages, device smoke test.
+
 ## Current state (as of 2026-11-15)
 
-- **Version 1.0:** M1–M11 implemented, with the M12 shared-core split complete;
+- **Version 1.0:** M1â€“M11 implemented, with the M12 shared-core split complete;
   PC and both ARM cross-builds pass the automated suites; controls, audio,
   effects CPU, punch-in FX and song export were validated on a physical RG35XX
   SP for both RG-808 and RG-SMP.
-- Repo: `master`, all work committed (M1/M2 → tooling/packaging → autosave & fixes).
+- Repo: `master`, all work committed (M1/M2 â†’ tooling/packaging â†’ autosave & fixes).
 - Working on PC: full app runs natively (`build/rg808.exe`) with audio + keyboard/gamepad;
   engine and UI validated by automated paths (bounce frame-count math, save/load round
   trip, screenshot inspection, 4 s live run without errors).
-- Built for device: `dist/rg808.zip` ready to install; ELF sanity confirmed
-  (ARM aarch64 + ARM EABI5 armhf, dynamically linked against system SDL2).
+- Built for device: 1.0 packages for RG-808 (`dist/rg808.zip`) and RG-SMP
+  (`dist/rgsmp.zip`); ELF sanity confirmed (ARM aarch64 + ARM EABI5 armhf,
+  dynamically linked against system SDL2).
 - Kit selection shipped: every variant family from the pack is selectable per
-  voice via the new KIT mode (menu → SELECT KITS).
+  voice via the new KIT mode (menu â†’ SELECT KITS).
 - M6 shipped (PC): global swing + per-step ratchets (2/3/4 rolls, flam) with
   RATCHET/SWING editor modes, persisted via `RCH`/`SWING` lines; WAV export
   header determinism bug fixed. Validated on device in 1.0.
@@ -330,14 +417,14 @@ extends M9; M11 is the performance FX layer.
   `conf/song_<tempo>_<yyyymmdd>_<hhmmss>.wav` export with progress bar. Verified by
   `tools/test-m8.ps1` (persistence, 250 BPM switch, loop/end, UI actions,
   first-bar bit-exact vs pattern bounce).
-- M8.5 shipped (PC): per-pattern length 1–16 (`LEN` in the pattern file),
+- M8.5 shipped (PC): per-pattern length 1â€“16 (`LEN` in the pattern file),
   live-clock wrap and per-bar song timing, menu/L1+Up editor, dimmed tail
   steps with an end marker. Verified by `tools/test-length.ps1` plus
   `--test-length`.
-- M9 shipped (PC + cross-build): master effects chain drive → modulation →
-  delay → reverb; drive selectable bitcrusher/overdrive/compression,
+- M9 shipped (PC + cross-build): master effects chain drive â†’ modulation â†’
+  delay â†’ reverb; drive selectable bitcrusher/overdrive/compression,
   modulation selectable flanger/phaser, free or tempo-synced delay, reverb,
-  bit-identical bypass, menu → EFFECTS page. Verified by `tools/test-m9.ps1` /
+  bit-identical bypass, menu â†’ EFFECTS page. Verified by `tools/test-m9.ps1` /
   `--test-fx`; validated on device in 1.0.
 - M9.5 shipped (PC): per-pattern FX settings stored in each pattern file and
   carried per bar by song snapshots; one shared DSP state per engine, so fast
@@ -345,9 +432,11 @@ extends M9; M11 is the performance FX layer.
   remains the fallback for old patterns. Verified by `tools/test-m9.ps1`.
 - M10 shipped (PC): Y mutes/unmutes the selected instrument in the sequencer
   (X still auditions), with an `M` marker and immediate voice cut; mutes apply
-  to live and song playback, are not persisted, and do not affect export.
+  to live and song playback and are not persisted. Since v1.1 they also apply
+  to the WAV export (the export confirmation page can include the muted
+  tracks on request).
   Verified by `tools/test-mute.ps1` / `--test-mute`.
-- M11 shipped (PC): R1 punch-in FX layer with 1/4–1/32 stutters, rewind, gate,
+- M11 shipped (PC): R1 punch-in FX layer with 1/4â€“1/32 stutters, rewind, gate,
   tape stop and phone filter; quantized to the next 16th, one at a time,
   crossfaded release, live and song playback. Ratchet/kit shortcuts moved to
   L1+Down / L2+Up. Verified by `tools/test-punch.ps1` / `--test-punch` and the

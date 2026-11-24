@@ -1,3 +1,5 @@
+param([string]$Exe = 'build\rg808.exe')
+
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path test | Out-Null
 Remove-Item -Recurse -Force test\m9lib -ErrorAction SilentlyContinue
@@ -27,7 +29,7 @@ function PatternFile([int]$slot, [string[]]$lines) {
   Set-Content ("test\m9lib\patterns\{0:D3}.txt" -f $slot) $lines
 }
 function Bounce([string]$name, [int]$slot) {
-  & build\rg808.exe --pattern $slot --bounce "test\m9-$name.wav" --loops 2 | Out-Null
+  & $Exe --pattern $slot --bounce "test\m9-$name.wav" --loops 2 | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "bounce $name failed" }
   return (Get-FileHash "test\m9-$name.wav" -Algorithm MD5).Hash
 }
@@ -35,7 +37,7 @@ function Bounce([string]$name, [int]$slot) {
 $env:RG808_CONF = 'test\m9lib'
 
 # Persistence, clamping, algorithm selection, sync math and bypass self-test.
-& build\rg808.exe --test-fx
+& $Exe --test-fx
 if ($LASTEXITCODE -ne 0) { throw 'effects self-test failed' }
 
 $ok = $true
@@ -108,16 +110,16 @@ else { 'FAIL: per-pattern FX ignored'; $ok = $false }
 
 # Song bars must switch FX with each pattern.
 Set-Content test\m9lib\song.txt @('RG808SONG1','LOOP 0','BAR 010','BAR 011')
-& build\rg808.exe --song --bounce test\m9-song-mixed.wav | Out-Null
+& $Exe --song --bounce test\m9-song-mixed.wav | Out-Null
 $hMixed = (Get-FileHash test\m9-song-mixed.wav -Algorithm MD5).Hash
 Set-Content test\m9lib\song.txt @('RG808SONG1','LOOP 0','BAR 010','BAR 010')
-& build\rg808.exe --song --bounce test\m9-song-same.wav | Out-Null
+& $Exe --song --bounce test\m9-song-same.wav | Out-Null
 $hSame = (Get-FileHash test\m9-song-same.wav -Algorithm MD5).Hash
 if ($hMixed -ne $hSame) { 'PASS: song bars apply their pattern FX' }
 else { 'FAIL: song ignored per-pattern FX'; $ok = $false }
 
 # FX page screenshot uses the wet pattern.
-& build\rg808.exe --pattern 11 --screenshot test\m9-fx.bmp --mode fx | Out-Null
+& $Exe --pattern 11 --screenshot test\m9-fx.bmp --mode fx | Out-Null
 $env:RG808_CONF = $null
 
 Add-Type -AssemblyName System.Drawing

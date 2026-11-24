@@ -1,3 +1,5 @@
+param([string]$Exe = 'build\rg808.exe')
+
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path test | Out-Null
 Remove-Item -Recurse -Force test\m8lib -ErrorAction SilentlyContinue
@@ -33,11 +35,11 @@ Set-Content test\m8lib\song.txt @('RG808SONG1','LOOP 0','BAR 001','BAR 002','BAR
 $env:RG808_CONF = 'test\m8lib'
 
 # Persistence + snapshot + length math.
-& build\rg808.exe --test-song
+& $Exe --test-song
 if ($LASTEXITCODE -ne 0) { throw 'song self-test failed' }
 
 # Streaming export.
-& build\rg808.exe --song --bounce test\m8-song.wav
+& $Exe --song --bounce test\m8-song.wav
 if ($LASTEXITCODE -ne 0) { throw 'song export failed' }
 
 function Sps([double]$bpm) { 44100.0 * 60.0 / ($bpm * 4.0) }
@@ -53,7 +55,7 @@ if ($size -eq (44 + $expected * 4)) {
 }
 
 # First bar must match a normal pattern bounce bit-for-bit.
-& build\rg808.exe --pattern 1 --bounce test\m8-bar1.wav --loops 1 | Out-Null
+& $Exe --pattern 1 --bounce test\m8-bar1.wav --loops 1 | Out-Null
 $a = [IO.File]::ReadAllBytes('test\m8-song.wav')
 $b = [IO.File]::ReadAllBytes('test\m8-bar1.wav')
 $compareFrames = [int]$bar1 - 2
@@ -66,10 +68,10 @@ if ($diff -lt 0) { 'PASS: first bar is bit-identical to pattern bounce' }
 else { "FAIL: first difference at byte $diff" }
 
 # UI screenshots.
-& build\rg808.exe --screenshot test\m8-song.bmp --mode song | Out-Null
-& build\rg808.exe --screenshot test\m8-songact.bmp --mode songact | Out-Null
-& build\rg808.exe --screenshot test\m8-export.bmp --mode export | Out-Null
-& build\rg808.exe --screenshot test\m8-exportconfirm.bmp --mode exportconfirm | Out-Null
+& $Exe --screenshot test\m8-song.bmp --mode song | Out-Null
+& $Exe --screenshot test\m8-songact.bmp --mode songact | Out-Null
+& $Exe --screenshot test\m8-export.bmp --mode export | Out-Null
+& $Exe --screenshot test\m8-exportconfirm.bmp --mode exportconfirm | Out-Null
 
 # Default export names are timestamped and never overwrite an earlier file.
 $gen = 'test\m8gen'
@@ -78,10 +80,10 @@ New-Item -ItemType Directory -Force -Path "$gen\patterns" | Out-Null
 Copy-Item test\m8lib\patterns\*.txt "$gen\patterns\"
 Copy-Item test\m8lib\song.txt "$gen\song.txt"
 $env:RG808_CONF = $gen
-& build\rg808.exe --song | Out-Null
+& $Exe --song | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'first default-name song export failed' }
 Start-Sleep -Milliseconds 1100
-& build\rg808.exe --song | Out-Null
+& $Exe --song | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'second default-name song export failed' }
 $exports = @(Get-ChildItem $gen -Filter 'song_*.wav')
 if ($exports.Count -ne 2) {

@@ -57,6 +57,13 @@ rg808.exe --test-punch                  # headless punch-in FX checks
 rg808.exe --screenshot shot.bmp         # render one UI frame to BMP
 rg808.exe --screenshot p.bmp --mode pattern   # pattern browser frame
 ```
+
+The `core` branch carries both machines, so its suites are run for both
+shells:
+```
+tools\test-machines.ps1     # headless suites + scripts for RG-808 and RG-SMP
+```
+
 Keyboard controls on PC: arrows=dpad, Z/Enter=A, X=B, C=X(hear), Y=mute,
 Space=START, Esc/Backspace=SELECT-menu, 1/2/3/4=L1/L2/R1/R2 (hold + arrows for
 shortcuts; hold 3=R1 and press a direction or Z/X/C/Y for punch-in FX),
@@ -66,11 +73,14 @@ shortcuts; hold 3=R1 and press a direction or Z/X/C/Y for punch-in FX),
 Requires Docker Desktop (or any docker):
 ```
 docker build -t rg808build tools/portmaster-build
-docker run --rm -v ${PWD}:/src rg808build      # -> dist/rg808.zip  (PowerShell)
+docker run --rm -v ${PWD}:/src rg808build             # -> dist/rg808.zip  (PowerShell)
+docker run --rm -e MACHINE=smp -v ${PWD}:/src rg808build   # -> dist/rgsmp.zip
 ```
 The container cross-compiles `rg808.aarch64` + `rg808.armhf` against Debian's
 SDL2 (the device ships its own libSDL2 at runtime; both arch binaries are
-inside the zip and the launcher picks the right one).
+inside the zip and the launcher picks the right one). `MACHINE` selects the
+machine: the `master` branch builds the drum machine by default, and the
+`core` / `sampler` branches build the sampler.
 
 ## Installing on the device
 Option A — over SSH (enable SSH on muOS first):
@@ -127,6 +137,8 @@ it hides the hint immediately.
 instrument; X still auditions it. Muted rows are tinted and marked with a red
 `M`. Mutes apply to live playback and song playback, cut any ringing hit
 immediately, and are not saved with the pattern (they reset on restart).
+They also apply to the WAV export: the export confirmation page lists the
+muted tracks, and Y toggles whether they are part of the export.
 Auditioning a muted track still works, so it stays programmable.
 
 **Punch-in FX**: hold R1 and press a direction or face button for a momentary

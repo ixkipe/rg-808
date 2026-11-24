@@ -17,6 +17,10 @@ int wav_load(const char *path, int target_rate, WavAudio *out);
 /* Writes a PCM16 stereo WAV. Returns 0 on success. */
 int wav_write_stereo16(const char *path, const float *interleaved, int frames, int rate);
 
+/* Peak amplitude of a WAV file, 0.0 when it cannot be read. Used by the
+ * automated suites to check what an export contains. */
+float wav_peak(const char *path);
+
 /* Streaming PCM16 stereo writer (used by long song exports). */
 typedef struct {
     FILE *f;

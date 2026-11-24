@@ -20,6 +20,7 @@
 #include "song.h"
 #include "fx.h"
 #include "perf_fx.h"
+#include "views/views.h"
 
 #define SCR_W 640
 #define SCR_H 480
@@ -91,6 +92,7 @@ typedef struct {
     char fx_path[1200];
     int fx_sel;                       /* FX page cursor */
     int export_progress;              /* 0..1000 */
+    int export_include_muted;         /* export muted tracks too (Y on the confirm page) */
     char export_display[64];
     int sh_held[SH_COUNT];            /* shoulder buttons currently down */
     int sh_last;                      /* most recent shoulder (overlay owner) */
@@ -313,6 +315,7 @@ static const Uint32 C_TEXT_DIM  = 0x8a8570;
 static const Uint32 C_CURSOR    = 0xffffff;
 static const Uint32 C_LED       = 0xff5040;
 static const Uint32 C_ACCENT    = 0xffffff;
+static const Uint32 C_WARN      = 0xe0c060;
 
 static const char RENAME_CHARS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_.";
 
@@ -322,33 +325,13 @@ static const char *PAT_ACT[PAT_ACT_N] = {
 
 static const char *SH_NAMES[SH_COUNT] = { "L1", "L2", "R1", "R2" };
 
-/* Shortcut shown for one shoulder + D-pad direction (NULL = reserved). */
-static const char *shortcut_label(int sh, int ad)
-{
-    switch (sh) {
-    case SH_L1:
-        if (ad == ACT_LEFT) return "TEMPO";
-        if (ad == ACT_RIGHT) return "SWING";
-        if (ad == ACT_UP) return "PATTERN LENGTH";
-        if (ad == ACT_DOWN) return "RATCHET";
-        break;
-    case SH_L2:
-        if (ad == ACT_LEFT) return "PATTERN LIBRARY";
-        if (ad == ACT_RIGHT) return "SONG MODE";
-        if (ad == ACT_UP) return "SAMPLE KIT";
-        if (ad == ACT_DOWN) return "EXPORT WAV";
-        break;
-    case SH_R2:
-        if (ad == ACT_UP) return "DRIVE FX";
-        if (ad == ACT_LEFT) return "MOD FX";
-        if (ad == ACT_DOWN) return "DELAY FX";
-        if (ad == ACT_RIGHT) return "REVERB FX";
-        break;
-    default:
-        break;
-    }
-    return NULL;
-}
+/* The core view layer mirrors this file's action values; the cast below is
+ * only valid while the two stay in sync. */
+_Static_assert((int)ACT_NONE == RGV_NONE && (int)ACT_UP == RGV_UP &&
+               (int)ACT_DOWN == RGV_DOWN && (int)ACT_LEFT == RGV_LEFT &&
+               (int)ACT_RIGHT == RGV_RIGHT && (int)ACT_CONFIRM == RGV_OK &&
+               (int)ACT_BACK == RGV_BACK,
+               "the shell actions must match the core view vocabulary");
 
 static void draw_pad_cell(Canvas *c, int x, int y, int size, const char *sym, int active)
 {
@@ -451,10 +434,10 @@ static void draw_shortcut_overlay(App *a)
     int uy = cy - cell / 2 - gap - cell;
     int dy = cy + cell / 2 + gap;
 
-    const char *ll = shortcut_label(sh, ACT_LEFT);
-    const char *rl = shortcut_label(sh, ACT_RIGHT);
-    const char *ul = shortcut_label(sh, ACT_UP);
-    const char *dl = shortcut_label(sh, ACT_DOWN);
+    const char *ll = rg_shortcut_label(sh, ACT_LEFT);
+    const char *rl = rg_shortcut_label(sh, ACT_RIGHT);
+    const char *ul = rg_shortcut_label(sh, ACT_UP);
+    const char *dl = rg_shortcut_label(sh, ACT_DOWN);
 
     draw_pad_cell(c, cx - cell / 2, uy, cell, "^", ul != NULL);
     draw_pad_cell(c, lx, cy - cell / 2, cell, "<", ll != NULL);
@@ -978,23 +961,31 @@ static void draw_export_progress(App *a)
     cv_text(c, mx + 16, my + 116, "PLEASE WAIT", 1, C_TEXT_DIM);
 }
 
+/* Shared view context: the canvas, the engine and this machine's palette. */
+static ViewCtx view_ctx(App *a)
+{
+    ViewCtx v;
+    v.cv = &a->cv;
+    v.eng = &a->eng;
+    v.text = C_TEXT;
+    v.dim = C_TEXT_DIM;
+    v.cursor = C_CURSOR;
+    v.led = C_LED;
+    v.panel = C_PANEL;
+    v.warn = C_WARN;
+    v.track = a->cur_track;
+    return v;
+}
+
 static void draw_export_confirm(App *a)
 {
-    Canvas *c = &a->cv;
-    int mw = 480, mh = 156;
-    int mx = (SCR_W - mw) / 2, my = (SCR_H - mh) / 2;
-    cv_rect(c, mx, my, mw, mh, C_PANEL);
-    cv_border(c, mx, my, mw, mh, 2, C_TEXT);
-    cv_text(c, mx + 16, my + 12, "EXPORT SONG?", 1, C_TEXT);
-    cv_text(c, mx + 16, my + 34, a->export_display, 1, C_TEXT_DIM);
-
-    char buf[64];
-    snprintf(buf, sizeof buf, "%d BARS  -  44.1 KHZ / 16-BIT STEREO",
-             a->song.count);
-    cv_text(c, mx + 16, my + 58, buf, 1, C_TEXT_DIM);
-    cv_text(c, mx + 16, my + 82, "A:EXPORT   B:CANCEL", 1, C_TEXT);
-    cv_text(c, mx + 16, my + 116,
-            "THE EXPORT KEEPS EVERY EARLIER WAV", 1, C_TEXT_DIM);
+    ViewCtx v = view_ctx(a);
+    ExportView ex;
+    ex.filename = a->export_display;
+    ex.bars = a->song.count;
+    ex.muted = engine_muted_count(&a->eng);
+    ex.include_muted = a->export_include_muted;
+    rg_draw_export_confirm(&v, &ex);
 }
 
 static void draw_ui(App *a)
@@ -1239,7 +1230,7 @@ static void draw_ui(App *a)
     else if (a->mode == MODE_EXPORT)
         cv_text(c, 10, SCR_H - 14, "EXPORTING WAV - PLEASE WAIT", 1, C_TEXT_DIM);
     else if (a->mode == MODE_EXPORT_CONFIRM)
-        cv_text(c, 10, SCR_H - 14, "A:EXPORT  B:CANCEL", 1, C_TEXT_DIM);
+        cv_text(c, 10, SCR_H - 14, "A:EXPORT  B:CANCEL  Y:MUTES", 1, C_TEXT_DIM);
     else
         cv_text(c, 10, SCR_H - 14, "A:STEP  B:CLEAR  X:HEAR  Y:MUTE  START:PLAY  SELECT:MENU  HOLD A SHOULDER", 1, C_TEXT_DIM);
 
@@ -1516,6 +1507,10 @@ static int render_song_wav(App *a, SongSet *set, const char *path, int show_prog
     FxSettings fx;
     fx_capture(&fx, &a->eng);
     fx_apply(&ex, &fx);
+    /* A muted track stays muted in the export, unless the user asked for the
+     * muted tracks to be included on the confirmation page. */
+    if (!a->export_include_muted)
+        engine_copy_mute(&ex, &a->eng);
     ex.song_set = set;
     ex.song_loop = 0;
     ex.song_start_bar = 0;
@@ -1589,6 +1584,7 @@ static void song_export_begin(App *a)
 
     a->export_return_mode = return_mode;
     a->export_progress = 0;
+    a->export_include_muted = 0;       /* muted tracks stay out unless asked */
     snprintf(a->export_display, sizeof a->export_display, "%s",
              path_basename(a->export_path));
     a->mode = MODE_EXPORT_CONFIRM;
@@ -1755,8 +1751,17 @@ static int test_song_run(App *a)
             engine_mix(&eb, lb + done * 2, n);
             done += n;
         }
-        CHECK(memcmp(la, lb, sizeof(float) * 2 * (size_t)nframes) == 0,
-              "live/export chunk sizes render identically");
+        /* The two renders are mathematically identical, but the voice pool
+         * frees its slots at chunk ends, so the voices can be summed in a
+         * different order and the last bits may differ. Compare with a
+         * tolerance instead of demanding bit equality. */
+        float worst = 0.0f;
+        for (long i = 0; i < (long)nframes * 2; i++) {
+            float d = la[i] - lb[i];
+            if (d < 0.0f) d = -d;
+            if (d > worst) worst = d;
+        }
+        CHECK(worst < 1e-5f, "live/export chunk sizes render identically");
         engine_free(&ea);
         engine_free(&eb);
     } else {
@@ -2576,6 +2581,11 @@ static void act(App *a, int act)
     case MODE_EXPORT_CONFIRM:
         switch (act) {
         case ACT_CONFIRM: song_export_run(a); break;
+        case ACT_MUTE:
+            a->export_include_muted = !a->export_include_muted;
+            set_msg(a, a->export_include_muted
+                    ? "MUTED TRACKS INCLUDED" : "MUTED TRACKS EXCLUDED");
+            break;
         case ACT_BACK:
         case ACT_MENU: a->mode = a->export_return_mode; break;
         default: break;
@@ -3524,11 +3534,19 @@ static int test_mute_run(App *a)
     engine_mix(&e, buf, 2048);
     CHECK(test_peak(buf, 2048) > 0.001f, "unmute restores audio");
 
-    /* A 4x roll needs four live voices; a lower cap cuts the roll short. */
+    /* A 4x roll needs four live voices; a lower cap cuts the roll short.
+     * A synthetic sample keeps the four hits alive for the whole window -
+     * the real kit hits are shorter than the four mixes below. */
+    static float roll_sample[44100];
+    for (int i = 0; i < 44100; i++)
+        roll_sample[i] = (i % 100 < 50) ? 0.5f : -0.5f;
     e.playing = 0;
     for (int s = 0; s < N_STEPS; s++) e.lvl[0][s] = e.rch[0][s] = 0;
     e.lvl[0][0] = LVL_ON;
     e.rch[0][0] = RCH_4;
+    e.sample_data[0] = roll_sample;
+    e.sample_len[0] = 44100;
+    for (int i = 0; i < MAX_VOICES; i++) { e.voices[i].data = NULL; e.voices[i].delay = 0; }
     engine_restart(&e);
     e.playing = 1;
     for (int n = 0; n < 4; n++) engine_mix(&e, buf, 2048);
@@ -3565,6 +3583,56 @@ static int test_mute_run(App *a)
         free(set);
     } else {
         CHECK(0, "song test buffer");
+    }
+
+    /* A muted track must stay muted in the exported WAV. */
+    {
+        static float test_sample[44100];
+        for (int i = 0; i < 44100; i++)
+            test_sample[i] = (i % 100 < 50) ? 0.5f : -0.5f;
+        SongSet *es = calloc(1, sizeof *es);
+        char p_full[1200], p_muted[1200], p_incl[1200];
+        if (es) {
+            pattern_default_snapshot(&es->pat[0]);
+            es->count = 1;
+            es->pat[0].bpm_x100 = 12000;
+            es->pat[0].length = N_STEPS;
+            es->pat[0].lvl[0][0] = LVL_ACC;
+            es->pat[0].lvl[1][0] = LVL_ACC;
+            for (int t = 0; t < N_TRACKS; t++) {
+                es->pat[0].sample[t] = test_sample;
+                es->pat[0].sample_len[t] = 44100;
+            }
+            snprintf(p_full, sizeof p_full, "%s/mute-export-full.wav", a->lib.conf_dir);
+            snprintf(p_muted, sizeof p_muted, "%s/mute-export-muted.wav", a->lib.conf_dir);
+            snprintf(p_incl, sizeof p_incl, "%s/mute-export-incl.wav", a->lib.conf_dir);
+
+            int fx_was = a->eng.fx.on;
+            a->eng.fx.on = 0;                 /* dry export: no FX in the way */
+            a->export_include_muted = 0;
+            a->eng.mute[0] = a->eng.mute[1] = 0;
+            render_song_wav(a, es, p_full, 0);
+            a->eng.mute[1] = 1;
+            render_song_wav(a, es, p_muted, 0);
+            a->export_include_muted = 1;
+            render_song_wav(a, es, p_incl, 0);
+            a->export_include_muted = 0;
+            a->eng.mute[1] = 0;
+            a->eng.fx.on = fx_was;
+
+            float pf = wav_peak(p_full);
+            float pm = wav_peak(p_muted);
+            float pi = wav_peak(p_incl);
+            CHECK(pf > 0.01f, "the export contains both tracks");
+            CHECK(pm < pf * 0.75f, "a muted track is silent in the export");
+            CHECK(pm > pf * 0.25f, "the unmuted track stays in the export");
+            CHECK(pi > pf * 0.95f && pi < pf * 1.05f,
+                  "the muted tracks can be included on request");
+            remove(p_full); remove(p_muted); remove(p_incl);
+        } else {
+            CHECK(0, "export mute test buffer");
+        }
+        free(es);
     }
 
     /* UI/action wiring: Y mutes in the sequencer but still auditions in KIT. */
@@ -3963,9 +4031,16 @@ static int run_bounce(App *a, const char *outpath, int loops)
     int rate = 44100;
     FxSettings fx;
     fx_capture(&fx, &a->eng);
+    /* The engine is rebuilt for the offline render; the performance mutes are
+     * live state and have to survive that, so a muted track stays muted in
+     * the bounced WAV. */
+    unsigned char muted[N_TRACKS];
+    for (int t = 0; t < N_TRACKS; t++) muted[t] = a->eng.mute[t];
     engine_free(&a->eng);
     engine_init(&a->eng, rate);
     fx_apply(&a->eng, &fx);
+    if (!a->export_include_muted)
+        for (int t = 0; t < N_TRACKS; t++) a->eng.mute[t] = muted[t];
     if (load_current(a) != 0) demo_pattern(a);
     machine_resolve_live(&a->eng);
     a->eng.playing = 1;

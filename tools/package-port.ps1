@@ -1,25 +1,38 @@
-# Windows fallback packager: assembles dist/rg808.zip from an existing
-# dist/rg808-staging/ (produced by a previous docker build run) + port/ files.
+# Windows fallback packager: assembles dist/<port>.zip from an existing
+# dist/<port>-staging/ (produced by a previous docker build run) + port/ files.
 # Use when you only changed assets or launch scripts and don't want Docker.
-# NOTE: Compress-Archive does not preserve the unix +x bit; RG808.sh chmods
+# NOTE: Compress-Archive does not preserve the unix +x bit; the launcher chmods
 # the binary itself on launch, so installed ports still run.
+#
+#   .\tools\package-port.ps1 -Machine smp     # RG-SMP (default)
+#   .\tools\package-port.ps1 -Machine 808     # RG-808
+param(
+  [ValidateSet('smp', '808')]
+  [string]$Machine = 'smp'
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 
+if ($Machine -eq '808') {
+  $port = 'rg808'; $launcher = 'RG808.sh'
+} else {
+  $port = 'rgsmp'; $launcher = 'RGSMP.sh'
+}
+
 $stage = Join-Path $root 'dist\build'
-if (-not (Test-Path 'dist\rg808-staging')) { throw 'no binaries yet — run the docker build first' }
+if (-not (Test-Path "dist\$port-staging")) { throw "no binaries yet - run the docker build first ($Machine)" }
 
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
-New-Item -ItemType Directory -Force -Path "$stage\rg808\assets\wav" | Out-Null
+New-Item -ItemType Directory -Force -Path "$stage\$port\assets\wav" | Out-Null
 
-Copy-Item 'port\RG808.sh' "$stage\RG808.sh"
-Copy-Item 'dist\rg808-staging\rg808.*' "$stage\rg808\\"
-Copy-Item 'assets\wav\*.wav' "$stage\rg808\assets\wav\\"
-Copy-Item 'port\rg808\licenses' "$stage\rg808\licenses" -Recurse
-if (Test-Path 'port\rg808\screenshot.png') { Copy-Item 'port\rg808\screenshot.png' "$stage\rg808\\" }
-Copy-Item 'port\README.md' "$stage\rg808\README.md"
-Copy-Item 'port\gameinfo.xml' "$stage\rg808\gameinfo.xml"
+Copy-Item "port\$launcher" "$stage\$launcher"
+Copy-Item "dist\$port-staging\$port.*" "$stage\$port\"
+Copy-Item 'assets\wav\*' "$stage\$port\assets\wav\" -Recurse
+Copy-Item "port\$port\licenses" "$stage\$port\licenses" -Recurse
+if (Test-Path "port\$port\screenshot.png") { Copy-Item "port\$port\screenshot.png" "$stage\$port\" }
+Copy-Item 'port\README.md' "$stage\$port\README.md"
+Copy-Item 'port\gameinfo.xml' "$stage\$port\gameinfo.xml"
 
-Compress-Archive -Path "$stage\RG808.sh", "$stage\rg808" -DestinationPath 'dist\rg808.zip' -Force
-"dist/rg808.zip: " + (Get-Item 'dist\rg808.zip').Length + " bytes"
+Compress-Archive -Path "$stage\$launcher", "$stage\$port" -DestinationPath "dist\$port.zip" -Force
+"dist/$port.zip: " + (Get-Item "dist\$port.zip").Length + " bytes"

@@ -1,41 +1,69 @@
 #!/bin/bash
-# Runs inside the rg808build container with the repo mounted at /src.
-# Produces /src/dist/rg808.zip (PortMaster installable) and the raw binaries.
+# Cross-build for the PortMaster ports. Runs inside the rg808build container
+# with the repo mounted at /src.
+#
+#   MACHINE=smp  (default) -> dist/rgsmp.zip  (port/RGSMP.sh + port/rgsmp/)
+#   MACHINE=808           -> dist/rg808.zip  (port/RG808.sh + port/rg808/)
+#
+# The sources follow the post-split layout: the shared core in src/core/ and
+# the machine shell in src/machines/<machine>/.
 set -e
 cd /src
 
-SRCS="src/core/engine.c src/core/canvas.c src/core/wav.c src/core/pattern.c src/core/song.c src/core/fx.c src/core/perf_fx.c src/core/step_ui.c src/machines/808/machine.c src/machines/808/samples.c src/machines/808/main.c"
-CFLAGS="-O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Isrc/core -Isrc/machines/808 -I/usr/include/SDL2 -DNDEBUG"
+MACHINE="${MACHINE:-smp}"
+case "$MACHINE" in
+  808)
+    PORT=rg808
+    LAUNCHER=RG808.sh
+    MDIR=src/machines/808
+    MSRC="src/machines/808/machine.c src/machines/808/samples.c src/machines/808/main.c"
+    ;;
+  smp)
+    PORT=rgsmp
+    LAUNCHER=RGSMP.sh
+    MDIR=src/machines/smp
+    MSRC="src/machines/smp/machine.c src/machines/smp/samplebank.c src/machines/smp/main.c"
+    ;;
+  *)
+    echo "unknown MACHINE=$MACHINE (expected smp or 808)" >&2
+    exit 1
+    ;;
+esac
+
+CORE="src/core/engine.c src/core/canvas.c src/core/wav.c src/core/pattern.c src/core/song.c src/core/fx.c src/core/perf_fx.c src/core/step_ui.c src/core/views/views.c"
+SRCS="$CORE $MSRC"
+CFLAGS="-O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Isrc/core -I$MDIR -I/usr/include/SDL2 -DNDEBUG"
 LIBS="-lSDL2 -lm"
 
-mkdir -p dist/rg808-staging
+STAGE="dist/$PORT-staging"
+mkdir -p "$STAGE"
 
 echo "== aarch64 =="
-aarch64-linux-gnu-gcc $CFLAGS -o dist/rg808-staging/rg808.aarch64 $SRCS $LIBS
+aarch64-linux-gnu-gcc $CFLAGS -o "$STAGE/$PORT.aarch64" $SRCS $LIBS
 
 echo "== armhf =="
 arm-linux-gnueabihf-gcc $CFLAGS -march=armv7-a -mfpu=neon-vfpv4 \
-  -o dist/rg808-staging/rg808.armhf $SRCS $LIBS
+  -o "$STAGE/$PORT.armhf" $SRCS $LIBS
 
-file dist/rg808-staging/rg808.* || true
+file "$STAGE/$PORT".* || true
 
-# assemble zip tree: RG808.sh + rg808/{binaries, assets, licenses}
+# assemble zip tree: <LAUNCHER> + <PORT>/{binaries, assets, licenses}
 rm -rf dist/build
-mkdir -p dist/build/rg808
-cp port/RG808.sh dist/build/
-cp dist/rg808-staging/rg808.* dist/build/rg808/
-mkdir -p dist/build/rg808/assets
-cp -r assets/wav dist/build/rg808/assets/
-cp -r port/rg808/licenses dist/build/rg808/
-[ -f port/rg808/screenshot.png ] && cp port/rg808/screenshot.png dist/build/rg808/ || true
-cp port/README.md dist/build/rg808/
-[ -f port/gameinfo.xml ] && cp port/gameinfo.xml dist/build/rg808/ || true
+mkdir -p "dist/build/$PORT"
+cp "port/$LAUNCHER" dist/build/
+cp "$STAGE/$PORT".* "dist/build/$PORT/"
+mkdir -p "dist/build/$PORT/assets"
+cp -r assets/wav "dist/build/$PORT/assets/"
+cp -r "port/$PORT/licenses" "dist/build/$PORT/"
+[ -f "port/$PORT/screenshot.png" ] && cp "port/$PORT/screenshot.png" "dist/build/$PORT/" || true
+cp port/README.md "dist/build/$PORT/"
+[ -f port/gameinfo.xml ] && cp port/gameinfo.xml "dist/build/$PORT/" || true
 
-chmod +x dist/build/RG808.sh dist/build/rg808/rg808.*
+chmod +x "dist/build/$LAUNCHER" "dist/build/$PORT/$PORT".*
 
 cd dist/build
-rm -f ../rg808.zip
-zip -r ../rg808.zip RG808.sh rg808 > /dev/null
+rm -f "../$PORT.zip"
+zip -r "../$PORT.zip" "$LAUNCHER" "$PORT" > /dev/null
 cd ..
-echo "== done: dist/rg808.zip =="
-ls -la rg808.zip
+echo "== done: dist/$PORT.zip =="
+ls -la "$PORT.zip"

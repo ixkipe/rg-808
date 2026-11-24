@@ -33,6 +33,11 @@ const char *machine_id(void);
 const char *machine_name(void);
 const char *machine_window_title(void);
 
+/* The one shoulder shortcut whose label differs between the machines
+ * (L2 + Up opens the sample browser on the sampler and the kit page on the
+ * drum machine). `sh`/`dir` use the shared RGSH_* / RGV_* vocabulary. */
+const char *machine_shortcut_label(int sh, int dir);
+
 /* Engine lifecycle and sample resolution. */
 void machine_init_engine(struct Engine *e);
 void machine_after_load(struct Engine *e);

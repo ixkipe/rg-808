@@ -1,3 +1,5 @@
+param([string]$Exe = 'build\rg808.exe')
+
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path test | Out-Null
 Remove-Item -Recurse -Force test\m7lib -ErrorAction SilentlyContinue
@@ -24,21 +26,21 @@ Set-Content -Path test\m7lib\pattern.txt -Value $legacy
 $env:RG808_CONF = 'test\m7lib'
 
 # 1. first run migrates the legacy v1 file into slot 001
-& build\rg808.exe --bounce test\m7-slot1.wav --loops 1 | Out-Null
+& $Exe --bounce test\m7-slot1.wav --loops 1 | Out-Null
 $slot1 = Test-Path test\m7lib\patterns\001.txt
 $index = Test-Path test\m7lib\patterns\index.txt
 if ($slot1 -and $index) { 'PASS: legacy pattern migrated to slot 001' } else { 'FAIL: migration' }
 
 # 2. changing the legacy file must not re-import over an existing slot
 (Get-Content test\m7lib\pattern.txt) -replace '^BPM .*','BPM 220.00' | Set-Content test\m7lib\pattern.txt
-& build\rg808.exe --pattern 1 --bounce test\m7-slot1b.wav --loops 1 | Out-Null
+& $Exe --pattern 1 --bounce test\m7-slot1b.wav --loops 1 | Out-Null
 $h1 = (Get-FileHash test\m7-slot1.wav -Algorithm MD5).Hash
 $h1b = (Get-FileHash test\m7-slot1b.wav -Algorithm MD5).Hash
 if ($h1 -eq $h1b) { 'PASS: slot 001 not overwritten by later legacy edits' } else { 'FAIL: re-imported legacy' }
 
 # 3. headless save/reload round-trip: copy slot 1 to slot 2 and render both
-& build\rg808.exe --pattern 1 --save-slot 2 | Out-Null
-& build\rg808.exe --pattern 2 --bounce test\m7-slot2.wav --loops 1 | Out-Null
+& $Exe --pattern 1 --save-slot 2 | Out-Null
+& $Exe --pattern 2 --bounce test\m7-slot2.wav --loops 1 | Out-Null
 $h2 = (Get-FileHash test\m7-slot2.wav -Algorithm MD5).Hash
 if ($h1 -eq $h2) { 'PASS: save slot + reload is bit-identical' } else { 'FAIL: save/reload differs' }
 $idx = Get-Content test\m7lib\patterns\index.txt
@@ -58,9 +60,9 @@ Remove-Item -Recurse -Force $wipe -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $wipe | Out-Null
 Copy-Item test\m7lib\pattern.txt $wipe\pattern.txt
 $env:RG808_CONF = $wipe
-& build\rg808.exe --bounce test\m7wipe-a.wav --loops 1 | Out-Null
+& $Exe --bounce test\m7wipe-a.wav --loops 1 | Out-Null
 Remove-Item $wipe\patterns\001.txt
-& build\rg808.exe --bounce test\m7wipe-b.wav --loops 1 | Out-Null
+& $Exe --bounce test\m7wipe-b.wav --loops 1 | Out-Null
 if (-not (Test-Path $wipe\patterns\001.txt)) {
   'PASS: deleting the library does not re-import the legacy file'
 } else {
@@ -70,8 +72,8 @@ $env:RG808_CONF = $null
 
 # 6. pattern browser + rename screenshots for visual inspection
 $env:RG808_CONF = 'test\m7lib'
-& build\rg808.exe --pattern 2 --screenshot test\m7-browser.bmp --mode pattern | Out-Null
-& build\rg808.exe --pattern 2 --screenshot test\m7-rename.bmp --mode rename | Out-Null
+& $Exe --pattern 2 --screenshot test\m7-browser.bmp --mode pattern | Out-Null
+& $Exe --pattern 2 --screenshot test\m7-rename.bmp --mode rename | Out-Null
 $env:RG808_CONF = $null
 
 Add-Type -AssemblyName System.Drawing
