@@ -66,6 +66,7 @@ typedef struct PatternSnapshot {
     unsigned char lvl[N_TRACKS][N_STEPS];
     unsigned char rch[N_TRACKS][N_STEPS];
     int kit[N_TRACKS];               /* 808 variant index; unused by the SMP */
+    int pitch[N_TRACKS];             /* semitones, -24..24 (duration preserved) */
     char sample_path[N_TRACKS][SAMPLE_PATH_MAX];
     const float *sample[N_TRACKS];   /* resolved by the song sample bank */
     int sample_len[N_TRACKS];
@@ -98,6 +99,8 @@ typedef struct Engine {
     volatile unsigned char lvl[N_TRACKS][N_STEPS];
     volatile unsigned char rch[N_TRACKS][N_STEPS];  /* per-step ratchet mode (RCH_*) */
     volatile int kit[N_TRACKS];            /* 808 selected variant (unused by SMP) */
+    volatile int pitch[N_TRACKS];          /* semitones -24..24, applied when the
+                                              sample is resolved (UI thread) */
     char sample_path[N_TRACKS][SAMPLE_PATH_MAX];    /* assigned sample, UI thread */
     volatile const float *sample_data[N_TRACKS];    /* decoded sample, audio thread */
     volatile int sample_len[N_TRACKS];

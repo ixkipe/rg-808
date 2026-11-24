@@ -1,4 +1,4 @@
-/* RG-808 ΓÇö TR-808 clone main: app state, input, UI, persistence, CLI modes. */
+/* RG-808 ÃƒÆ’Ã…Â½ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¶ TR-808 clone main: app state, input, UI, persistence, CLI modes. */
 #include <SDL.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -20,7 +20,9 @@
 #include "song.h"
 #include "fx.h"
 #include "perf_fx.h"
+#include "pitch.h"
 #include "views/views.h"
+#include "views/pitch_view.h"
 
 #define SCR_W 640
 #define SCR_H 480
@@ -50,7 +52,7 @@
 enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_KIT, MODE_RCH, MODE_SWING,
             MODE_LENGTH, MODE_FX, MODE_PATTERN, MODE_PAT_ACT, MODE_RENAME,
             MODE_SONG, MODE_SONG_ACT, MODE_EXPORT_CONFIRM, MODE_EXPORT,
-            MODE_VOL };
+            MODE_PITCH, MODE_VOL };
 
 enum Action {
     ACT_NONE, ACT_UP, ACT_DOWN, ACT_LEFT, ACT_RIGHT,
@@ -469,6 +471,11 @@ static void draw_shortcut_overlay(App *a)
 
     cv_text(c, px + 16, py + ph - 18,
             "RELEASE THE SHOULDER TO CLOSE", 1, C_TEXT_DIM);
+    if (sh == SH_L1) {
+        const char *face = "X: PITCH";
+        cv_text(c, px + pw - cv_text_w(face, 1) - 16, py + ph - 18,
+                face, 1, C_TEXT);
+    }
 }
 
 static void draw_pattern_list(App *a, int with_actions)
@@ -1075,12 +1082,15 @@ static void draw_ui(App *a)
         cv_text(c, 22, y, TRACKS[t].label, 1,
                 muted ? cv_dim(TRACKS[t].color, 0.40f)
                       : (on_row ? TRACKS[t].color : C_TEXT_DIM));
-        if (variant_count(t) > 1) {                  /* current variant number */
+        if (e->pitch[t] != 0) {                      /* transposed: show the interval */
+            snprintf(tbuf, sizeof tbuf, "%+d", pitch_clamp(e->pitch[t]));
+            cv_text(c, 40, y, tbuf, 1, muted ? cv_dim(C_LED, 0.45f) : C_LED);
+        } else if (variant_count(t) > 1) {           /* current variant number */
             snprintf(tbuf, sizeof tbuf, "%d", e->kit[t] + 1);
             cv_text(c, 46, y, tbuf, 1, muted ? cv_dim(C_TEXT_DIM, 0.55f) : C_TEXT_DIM);
         }
         if (muted)                                   /* performance mute marker */
-            cv_text(c, 64, y, "M", 1, C_LED);
+            cv_text(c, 66, y, "M", 1, C_LED);
     }
 
     /* cells (edit) / variant picker (kit) / ratchet editor (rch) */
@@ -1192,6 +1202,9 @@ static void draw_ui(App *a)
         draw_export_progress(a);
     } else if (a->mode == MODE_EXPORT_CONFIRM) {
         draw_export_confirm(a);
+    } else if (a->mode == MODE_PITCH) {
+        ViewCtx v = view_ctx(a);
+        rg_draw_pitch_page(&v);
     }
 
     /* status / menu / hints */
@@ -2591,6 +2604,34 @@ static void act(App *a, int act)
         default: break;
         }
         break;
+    case MODE_PITCH: {
+        ViewCtx v = view_ctx(a);
+        int changed = 0;
+        switch (act) {
+        case ACT_UP:
+        case ACT_DOWN:
+        case ACT_LEFT:
+        case ACT_RIGHT:
+            changed = rg_pitch_page_action(&v, act);
+            break;
+        case ACT_CONFIRM:                      /* A auditions the new interval */
+        case ACT_HEAR:
+            engine_preview(e, a->cur_track, e->kit[a->cur_track], RCH_OFF, LVL_ON);
+            break;
+        case ACT_BACK:
+        case ACT_MENU:
+            a->mode = MODE_EDIT;
+            break;
+        default:
+            break;
+        }
+        if (changed) {
+            a->dirty = 1;
+            machine_resolve_live(e);           /* the kit cache does the work */
+            engine_preview(e, a->cur_track, e->kit[a->cur_track], RCH_OFF, LVL_ON);
+        }
+        break;
+    }
     default: break;
     }
 }
@@ -2822,6 +2863,7 @@ static int input_dir(App *a, int ad)
 
 /* Headless check of the shoulder shortcut map (`--test-shortcuts`). */
 static void handle_trigger_axis(App *a, int sh, int val);
+static void handle_gc_button(App *a, int button, int down);
 
 static int test_shortcuts_run(App *a)
 {
@@ -2879,6 +2921,20 @@ static int test_shortcuts_run(App *a)
     CHECK(a->mode == MODE_RCH, "L1+Down opens ratchet notes");
     handle_shoulder(a, SH_L1, 0);
     a->sh_suppress = 0;
+
+    a->mode = MODE_EDIT;
+    a->cur_track = 1;
+    a->eng.pitch[1] = 0;
+    handle_shoulder(a, SH_L1, 1);
+    handle_gc_button(a, SDL_CONTROLLER_BUTTON_X, 1);
+    CHECK(a->mode == MODE_PITCH, "L1+X opens the pitch page");
+    act(a, ACT_UP);
+    CHECK(a->eng.pitch[1] == 1, "the pitch page edits the selected track");
+    act(a, ACT_BACK);
+    handle_gc_button(a, SDL_CONTROLLER_BUTTON_X, 0);
+    handle_shoulder(a, SH_L1, 0);
+    a->sh_suppress = 0;
+    a->eng.pitch[1] = 0;
 
     a->mode = MODE_EDIT;
     handle_shoulder(a, SH_L2, 1);
@@ -3682,8 +3738,22 @@ static void gc_note_mapping(SDL_GameController *gc)
     }
 }
 
+/* L1 + X opens the pitch page for the selected track. */
+static int shortcut_pitch(App *a, int is_x)
+{
+    if (!is_x) return 0;
+    if (a->sh_suppress || !shortcuts_enabled(a)) return 0;
+    if (active_shoulder(a) != SH_L1) return 0;
+    if (a->eng.song_playing) stop_playback(a);
+    a->mode = MODE_PITCH;
+    a->sh_suppress = 1;
+    a->shortcut_until = 0;
+    return 1;
+}
+
 static void handle_key(App *a, SDL_Keycode k)
 {
+    if (shortcut_pitch(a, k == SDLK_c)) return;
     if (punch_enabled(a)) {
         int eff = punch_for_key(k);
         if (eff >= 0) { punch_press(a, eff); return; }
@@ -3759,6 +3829,8 @@ static void handle_gc_button(App *a, int button, int down)
         }
     }
 
+    if (down && shortcut_pitch(a, button == SDL_CONTROLLER_BUTTON_X)) return;
+
     if (down) {
         switch (button) {
         case SDL_CONTROLLER_BUTTON_A:
@@ -3812,6 +3884,7 @@ static void handle_joy_button(App *a, int button, int down)
             return;
         }
     }
+    if (down && shortcut_pitch(a, button == 2)) return;   /* L1 + X */
     if (!down) {
         if (button == 0) edit_a_up(a);
         return;
@@ -3912,6 +3985,99 @@ static void handle_joy_axis(App *a, int axis, int val)
     if (!nd) return;
     if (axis == 0) input_dir(a, nd > 0 ? ACT_RIGHT : ACT_LEFT);
     else           input_dir(a, nd > 0 ? ACT_DOWN : ACT_UP);
+}
+
+/* Headless pitch checks (`--test-pitch`). */
+static int test_pitch_run(App *a)
+{
+    int fails = 0;
+    SDL_Init(SDL_INIT_TIMER);
+
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    CHECK(pitch_selftest(44100) == 0, "pitch DSP self-test");
+
+    /* Page actions: one semitone per tap, an octave on left/right, clamped. */
+    a->cur_track = 2;
+    ViewCtx v = view_ctx(a);
+    v.track = 2;
+    a->eng.pitch[2] = 0;
+    CHECK(rg_pitch_page_action(&v, RGV_UP) == 1 && a->eng.pitch[2] == 1,
+          "up moves one semitone");
+    CHECK(rg_pitch_page_action(&v, RGV_LEFT) == 1 && a->eng.pitch[2] == -11,
+          "left moves an octave");
+    rg_pitch_page_action(&v, RGV_LEFT);
+    rg_pitch_page_action(&v, RGV_LEFT);
+    CHECK(a->eng.pitch[2] == PITCH_MIN, "the interval stops at -24");
+    CHECK(rg_pitch_page_action(&v, RGV_LEFT) == 0,
+          "a clamped action reports no change");
+    a->eng.pitch[2] = 0;
+
+    /* Persistence: per-track PIT lines and legacy files. */
+    char path[1200];
+    snprintf(path, sizeof path, "%s/pitch-test.txt", a->lib.conf_dir);
+    for (int t = 0; t < N_TRACKS; t++) a->eng.pitch[t] = 0;
+    a->eng.pitch[0] = -7;
+    a->eng.pitch[5] = 24;
+    CHECK(pattern_save_file(&a->eng, path) == 0, "a pitched pattern saves");
+    Engine r;
+    engine_init(&r, 44100);
+    CHECK(pattern_load_file(&r, path) == 0, "a pitched pattern loads");
+    CHECK(r.pitch[0] == -7 && r.pitch[5] == 24 && r.pitch[1] == 0,
+          "pitch round-trips per track");
+
+    FILE *f = fopen(path, "r");
+    if (f) {
+        char line[512];
+        int saw = 0, saw_kit = 0;
+        while (fgets(line, sizeof line, f)) {
+            if (!strncmp(line, "PIT ", 4) && strstr(line, "-7")) saw = 1;
+            if (!strncmp(line, "KIT ", 4)) saw_kit = 1;
+        }
+        fclose(f);
+        CHECK(saw, "PIT lines are written in the pattern file");
+        CHECK(saw_kit, "the kit lines are still written around them");
+    } else {
+        CHECK(0, "pitch pattern reopens");
+    }
+
+    /* The live resolution path: a transposed track plays a rendered buffer of
+     * the same length, and returning to 0 restores the kit sample. */
+    int len0 = 0;
+    const float *orig = sample_get(0, r.kit[0], &len0);
+    if (orig && len0 > 0) {
+        r.pitch[0] = 12;
+        machine_resolve_live(&r);
+        CHECK(r.sample_data[0] != orig && r.sample_len[0] == len0,
+              "a transposed track plays a rendered copy of the same length");
+
+        const float *again = (const float *)r.sample_data[0];
+        r.pitch[0] = 7;
+        machine_resolve_live(&r);
+        CHECK(r.sample_data[0] != again && r.sample_len[0] == len0,
+              "changing the interval renders a different copy");
+
+        r.pitch[0] = 12;
+        machine_resolve_live(&r);
+        CHECK(r.sample_data[0] == again, "returning to an interval reuses the cache");
+
+        r.pitch[0] = 0;
+        machine_resolve_live(&r);
+        CHECK(r.sample_data[0] == orig && r.sample_len[0] == len0,
+              "clearing the interval restores the original sample");
+    } else {
+        printf("SKIP: kit samples not loaded, resolution path not checked\n");
+    }
+    engine_free(&r);
+
+    remove(path);
+
+    SDL_Quit();
+    return fails ? 1 : 0;
+#undef CHECK
 }
 
 /* Headless punch-in checks (`--test-punch`). */
@@ -4093,6 +4259,7 @@ int main(int argc, char **argv)
     int test_pattern = 0;
     int test_swing = 0;
     int test_levels = 0;
+    int test_pitch = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -4115,11 +4282,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--test-pattern")) test_pattern = 1;
         else if (!strcmp(argv[i], "--test-swing")) test_swing = 1;
         else if (!strcmp(argv[i], "--test-levels")) test_levels = 1;
+        else if (!strcmp(argv[i], "--test-pitch")) test_pitch = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
                    " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-pattern] [--test-swing] [--test-levels]"
-                   " [--screenshot out.bmp [--mode edit|mute|punch|kit|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|exportconfirm|vol|l1|l2|r1|r2]]\n");
+                   " [--screenshot out.bmp [--mode edit|mute|punch|kit|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|exportconfirm|pitch|vol|l1|l2|r1|r2]]\n");
             return 0;
         }
     }
@@ -4149,7 +4317,7 @@ int main(int argc, char **argv)
         return fails ? 1 : 0;
     }
 
-    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch || test_pattern || test_levels) {
+    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch || test_pattern || test_levels || test_pitch) {
         samples_load_all(assets, 44100);
         machine_resolve_live(&a.eng);
         resolve_conf(&a, base ? base : ".");
@@ -4165,6 +4333,7 @@ int main(int argc, char **argv)
         if (test_punch) return test_punch_run(&a);
         if (test_pattern) return test_pattern_run(&a);
         if (test_levels) return test_levels_run(&a);
+        if (test_pitch) return test_pitch_run(&a);
 
         if (save_slot_set) {
             engine_free(&a.eng);
@@ -4295,6 +4464,7 @@ int main(int argc, char **argv)
                 a.shortcut_until = SDL_GetTicks() + 60000;
             }
             else if (!strcmp(mode_arg, "kit"))   { a.mode = MODE_KIT; a.cur_step = a.eng.kit[a.cur_track]; }
+            else if (!strcmp(mode_arg, "pitch")) { a.mode = MODE_PITCH; a.cur_track = 0; a.eng.pitch[0] = 7; machine_resolve_live(&a.eng); }
             else if (!strcmp(mode_arg, "vol")) {
                 a.mode = MODE_VOL;
                 step_ui_init(&a.step_ui);
