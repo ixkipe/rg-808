@@ -338,8 +338,10 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
     gate the MIDI device phase.
   - [x] Add the `src/core/views/` seam: shared view context, action
     vocabulary, shortcut-label table and export panel, so the v1.1 pages are
-    written once instead of twice. The two shells keep their palette and
-    their machine-specific label.
+    written once instead of twice. The shoulder hint is shared too: every
+    shoulder draws the same panel (D-pad left, face diamond right), and a
+    shoulder + face combination is one row in a label table - so the next
+    face-button shortcut needs no layout work.
   - [x] `tools/test-machines.ps1` runs the automated suites for **both**
     shells. The 808 suites were never run on `core` before: the pattern-based
     scripts use the RG808P1 format and silently degraded against the sampler
