@@ -4649,6 +4649,27 @@ static int test_pitch_run(App *a)
     remove(path);
     engine_free(&r);
 
+    /* A song bar carries its own interval into the snapshot. */
+    {
+        char slot_path[1200];
+        snprintf(slot_path, sizeof slot_path, "%s/001.txt", a->lib.pat_dir);
+        for (int t = 0; t < N_TRACKS; t++) a->eng.pitch[t] = 0;
+        a->eng.pitch[4] = -5;
+        if (pattern_save_file(&a->eng, slot_path) == 0) {
+            a->lib.exists[0] = 1;
+            PatternSnapshot s;
+            if (pattern_load_snapshot(&a->lib, 1, &s) == 0)
+                CHECK(s.pitch[4] == -5 && s.pitch[0] == 0,
+                      "a loaded slot carries its interval into the snapshot");
+            else
+                CHECK(0, "the pitched slot loads");
+        } else {
+            CHECK(0, "the pitched slot saves");
+        }
+        remove(slot_path);
+        for (int t = 0; t < N_TRACKS; t++) a->eng.pitch[t] = 0;
+    }
+
     SDL_Quit();
     return fails ? 1 : 0;
 #undef CHECK
