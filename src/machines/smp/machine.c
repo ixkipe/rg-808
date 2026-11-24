@@ -2,6 +2,7 @@
  * model.  The shared core owns sequencing, patterns, songs and FX. */
 #include "engine.h"
 #include "machine.h"
+#include "pitch.h"
 #include "samplebank.h"
 #include "smp_machine.h"
 #include "song.h"
@@ -120,7 +121,8 @@ void machine_write_sample_lines(FILE *f, const Engine *e)
 
 /* Resolve every sample path in the set against one bank. Returns the number of
  * missing/failed samples, or -2 when the set needs more slots than the bank. */
-int song_load_samples(SongSet *set, SampleBank *bank, const char *root)
+int song_load_samples(SongSet *set, SampleBank *bank, const char *root,
+                      PitchCache *pitch)
 {
     if (!set || !bank || !root) return -1;
 
@@ -152,7 +154,19 @@ int song_load_samples(SongSet *set, SampleBank *bank, const char *root)
                 missing++;
                 continue;
             }
-            set->pat[i].sample[t] = samplebank_data(bank, idx, &set->pat[i].sample_len[t]);
+            int len = 0;
+            const float *data = samplebank_data(bank, idx, &len);
+            int st = pitch_clamp(set->pat[i].pitch[t]);
+            if (st != 0 && data && len > 0 && pitch) {
+                int plen = 0;
+                const float *pitched = pitch_cache_get(pitch, p, data, len, st, &plen);
+                if (pitched && plen > 0) {
+                    data = pitched;
+                    len = plen;
+                }
+            }
+            set->pat[i].sample[t] = data;
+            set->pat[i].sample_len[t] = len;
         }
     }
     if (bank->overflow) return -2;

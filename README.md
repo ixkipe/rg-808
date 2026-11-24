@@ -69,6 +69,7 @@ rg808.exe --song --bounce song.wav                  # render the song chain once
 rg808.exe --song                                   # export to conf/song_<tempo>_<date>_<time>.wav
 rg808.exe --test-sampler                           # sample bank/browser/persistence
 rg808.exe --test-mute                              # performance-mute checks
+rg808.exe --test-pitch                             # transpose DSP / cache / PIT lines
 rg808.exe --test-punch                             # punch-in FX checks
 rg808.exe --test-shortcuts                         # shoulder map
 rg808.exe --test-length                            # pattern-length checks
@@ -135,6 +136,7 @@ hint. The assigned combinations are:
 | L1 + Right | Swing |
 | L1 + Up | Pattern length |
 | L1 + Down | Ratchet notes |
+| L1 + X | Pitch / transpose the selected track |
 | L2 + Left | Pattern library |
 | L2 + Right | Song mode |
 | L2 + Up | Sample browser |
@@ -148,6 +150,15 @@ hint. The assigned combinations are:
 
 All L2 combinations are mapped. Pressing a shoulder shows the hint; releasing
 it hides the hint immediately.
+
+**Pitch**: L1+X opens the pitch page for the selected track. Up/down move one
+semitone, left/right move a whole octave, A auditions and B returns; the range
+is -24..+24 semitones. The shift is time-stretched, so the sample keeps its
+duration and the beat stays put - the sample is re-rendered once when the value
+changes and cached, so playback costs nothing. The interval is stored with the
+pattern (`PIT` lines), so every song bar can transpose on its own, and the
+sequencer row shows it next to the track label (`+7`). Rendering a long sample
+takes a moment; the transport keeps running while it happens.
 
 **Sample browser**: menu -> SAMPLE BROWSER or L2+Up. D-pad scrolls, left/right
 pages, A enters a directory or assigns/auditions a WAV to the current track,
@@ -206,9 +217,10 @@ is never overwritten. L2+Down opens the same export after a confirmation page.
 ## Pattern format
 
 Patterns are plain text: `RGSMP1`, `BPM`, `SMP <track> <relative/path.wav>`,
-16-character level rows, `RCH`, `SWING`, `LEN` and the FX lines. Slots are
-atomic writes (temp + fsync + rename). Paths are relative to `assets/wav`;
-files that are missing at startup are shown with `!` and stay silent.
+`PIT <track> <semitones>` for transposed tracks, 16-character level rows,
+`RCH`, `SWING`, `LEN` and the FX lines. Slots are atomic writes (temp + fsync +
+rename). Paths are relative to `assets/wav`; files that are missing at startup
+are shown with `!` and stay silent.
 
 ## Credits & licences
 

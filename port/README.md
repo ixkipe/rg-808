@@ -47,11 +47,18 @@ The first launch installs a factory 909 groove named `DEFAULT` into slot 001
 
 Shoulder shortcuts (hold + D-pad):
 L1+Left = tempo, L1+Right = swing, L1+Up = pattern length,
-L1+Down = ratchet notes, L2+Left = pattern library, L2+Right = song mode,
+L1+Down = ratchet notes, L1+X = pitch (transpose the selected track),
+L2+Left = pattern library, L2+Right = song mode,
 L2+Up = sample browser, L2+Down = export song to WAV (with a confirmation
 page), R2+Up = drive FX, R2+Left = modulation FX,
 R2+Down = delay FX, R2+Right = reverb FX. Pressing a shoulder shows the hint
 overlay; releasing it hides the overlay.
+
+Pitch: L1+X opens the pitch page for the selected track. Up/down move one
+semitone, left/right a whole octave, A auditions, B returns; the range is
+-24..+24. The sample is time-stretched, so its length - and the beat - stays
+put. The interval is saved with the pattern and shown next to the track label
+(+7); each song bar can transpose on its own.
 
 R1 punch-in FX: hold R1 and press Left/Right/Up/Down for 1/4, 1/8, 1/16 or
 1/32 stutter loops; A = 1/4 rewind, B = 1/16 gate, X = tape stop (one 1/8

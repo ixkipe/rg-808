@@ -30,7 +30,7 @@ case "$MACHINE" in
     ;;
 esac
 
-CORE="src/core/engine.c src/core/canvas.c src/core/wav.c src/core/pattern.c src/core/song.c src/core/fx.c src/core/perf_fx.c src/core/step_ui.c src/core/views/views.c"
+CORE="src/core/engine.c src/core/canvas.c src/core/wav.c src/core/pitch.c src/core/pattern.c src/core/song.c src/core/fx.c src/core/perf_fx.c src/core/step_ui.c src/core/views/views.c src/core/views/pitch_view.c"
 SRCS="$CORE $MSRC"
 CFLAGS="-O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Isrc/core -I$MDIR -I/usr/include/SDL2 -DNDEBUG"
 LIBS="-lSDL2 -lm"

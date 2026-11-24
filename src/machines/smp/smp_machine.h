@@ -3,10 +3,13 @@
 #define RG808_SMP_MACHINE_H
 
 #include "engine.h"
+#include "pitch.h"
 #include "samplebank.h"
 
-/* Resolve every sample path in a song set against one bank. Returns the number
- * of missing samples, or -2 when the set needs more slots than the bank. */
-int song_load_samples(SongSet *set, SampleBank *bank, const char *root);
+/* Resolve every sample path in a song set against one bank, applying each
+ * bar's transposition through `pitch`. Returns the number of missing samples,
+ * or -2 when the set needs more slots than the bank. */
+int song_load_samples(SongSet *set, SampleBank *bank, const char *root,
+                      PitchCache *pitch);
 
 #endif
