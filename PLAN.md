@@ -350,13 +350,29 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
   - [x] Export confirmation lists the excluded tracks and can include them (Y).
   - [x] `--test-mute` covers the export path; README / CORE / port README /
     PLAN updated (1.0 documented the opposite behaviour).
-- [ ] **P2 — Pitch ±24 semitones with time stretch** (L1+X)
-  - [ ] Core: phase vocoder (`src/core/pitch.c`) + a pitch cache keyed by
-    (sample, semitones) with a memory cap.
-  - [ ] `PIT` pattern lines, per-pattern pitch, song bars carry their own.
-  - [ ] L1+X page: ±1 semitone up/down, ±12 left/right, audition, header
-    readout.
-  - [ ] `--test-pitch`: pitch accuracy, duration preserved, round-trip.
+- [x] **P2 — Pitch ±24 semitones with time stretch** (L1+X)
+  - [x] Core: `src/core/pitch.c` — a phase vocoder with identity phase locking
+    (the deviation is scaled to the synthesis hop, without which the pitch
+    bends as the interval leaves 0) plus a cubic resampler that restores the
+    length. 10 s of audio renders in ~0.3 s on the PC, so the work stays on
+    the UI thread.
+  - [x] `PitchCache` keyed by (sample, semitones) with a byte/entry budget: the
+    live engine and the song bars share rendered copies, and a hit costs
+    nothing. Entries are never evicted while the audio thread may read them;
+    the cache is cleared where the owner knows playback stopped (a sample-bank
+    reload). Over budget falls back to the unpitched sample and says so.
+  - [x] `PIT <label> <n>` pattern lines, clamped to ±24, written only for
+    pitched tracks; per song bar.
+  - [x] L1+X opens the shared pitch page (`src/core/views/pitch_view.c`):
+    ±1 semitone on up/down, ±12 on left/right, A auditions, B returns. The
+    working copy is re-resolved immediately; the sequencer row shows the
+    interval (`+7`) next to the track label.
+  - [x] `--test-pitch` / `tools/test-pitch.ps1`: frequency accuracy at
+    ±12/±24 (0.00 % error), length preserved, amplitude preserved, cache
+    reuse, PIT round-trip and clamping, legacy files, the L1+X shortcut, and
+    on the 808 the real kit resolution path.
+  - [x] Verified in the bounce: a transposed pattern differs from the same
+    pattern without the interval while the render length is unchanged.
 - [ ] **P3 — Programmable sample start/end** (L1+B)
   - [ ] Core: voices gain start/end frame offsets; `TRM` pattern lines with
     0.01 % resolution, per sequencer step.
