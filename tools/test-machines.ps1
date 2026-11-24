@@ -18,11 +18,11 @@ Set-Location (Split-Path -Parent $root)
 
 # Headless self-tests (no assets needed) that both shells implement.
 $headless = @('shortcuts', 'song', 'length', 'fx', 'mute', 'punch',
-              'pattern', 'swing', 'levels')
+              'pattern', 'swing', 'levels', 'pitch')
 
 # Scripts that work with either shell.
 $common = @('test-levels', 'test-mute', 'test-pattern', 'test-punch',
-            'test-shortcuts', 'test-swing')
+            'test-shortcuts', 'test-swing', 'test-pitch')
 
 # Scripts built around the RG808P1 pattern format: the drum machine only.
 $drum = @('test-determinism', 'test-kits', 'test-length', 'test-m6',

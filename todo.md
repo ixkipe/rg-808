@@ -1,6 +1,6 @@
 ## v1.1 Roadmap
-- [ ] change pitch w/time stretch (-24 / +24 semitones) (shortcut: L1 + X)
-  - planned: per pattern (`PIT` lines, like the 808 `KIT` lines), rendered offline through a phase vocoder and cached by (sample, semitones) - see PLAN.md P2
+- [x] change pitch w/time stretch (-24 / +24 semitones) (shortcut: L1 + X)
+  - shipped: phase-vocoder transpose rendered offline and cached by (sample, semitones), `PIT` pattern lines (per song bar), shared L1+X page - see PLAN.md P2
 - [x] muted instruments must remain muted in exported WAV too
   - shipped: the export engine inherits the live mute state; the export confirmation page lists the muted tracks and Y includes them on request - see PLAN.md P1
 - [ ] step-programmable sample length with start/end points (in two-place decimal percentages, e.g. start point: 5.64%, end point: 98.74%) (shortcut: L1 + B)

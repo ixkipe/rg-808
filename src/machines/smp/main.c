@@ -24,7 +24,9 @@
 #include "song.h"
 #include "fx.h"
 #include "perf_fx.h"
+#include "pitch.h"
 #include "views/views.h"
+#include "views/pitch_view.h"
 
 #define SCR_W 640
 #define SCR_H 480
@@ -54,7 +56,7 @@
 enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_SAMPLE, MODE_RCH, MODE_SWING,
             MODE_LENGTH, MODE_FX, MODE_PATTERN, MODE_PAT_ACT, MODE_RENAME,
             MODE_SONG, MODE_SONG_ACT, MODE_EXPORT_CONFIRM, MODE_EXPORT,
-            MODE_VOL };
+            MODE_PITCH, MODE_VOL };
 
 enum Action {
     ACT_NONE, ACT_UP, ACT_DOWN, ACT_LEFT, ACT_RIGHT,
@@ -72,6 +74,8 @@ typedef struct {
     SampleBank live_bank;
     SampleBank song_bank;
     SampleBank preview_bank;
+    PitchCache live_pitch;            /* rendered transposes for the live bank */
+    PitchCache song_pitch;            /* ... and for the song bank */
     char assets_root[1400];
     char sample_dir[SAMPLE_PATH_MAX];
     SampleDirEntry sample_list[SAMPLE_LIST_MAX];
@@ -204,6 +208,45 @@ static const char *path_basename(const char *path)
 
 static void stop_playback(App *a);
 static void sampler_live_reload(App *a);
+static void sampler_repatch(App *a, int track);
+
+/* Point one track at its sample, transposed when the pattern asks for it. The
+ * original stays in the bank; the rendered copy lives in the pitch cache, so
+ * switching between intervals is free after the first render. */
+static void sampler_apply_pitch(App *a, int t, const float *data, int len)
+{
+    Engine *e = &a->eng;
+    e->sample_data[t] = data;
+    e->sample_len[t] = len;
+
+    int st = pitch_clamp(e->pitch[t]);
+    if (!data || len <= 0 || st == 0) return;
+
+    int plen = 0;
+    const float *p = pitch_cache_get(&a->live_pitch, e->sample_path[t],
+                                     data, len, st, &plen);
+    if (p && plen > 0) {
+        e->sample_data[t] = p;
+        e->sample_len[t] = plen;
+    } else if (a->live_pitch.overflow) {
+        set_msg(a, "PITCH CACHE FULL - UNPITCHED");
+    }
+}
+
+/* Re-resolve one track after its pitch changed: no file access, the bank
+ * entry is already loaded. */
+static void sampler_repatch(App *a, int t)
+{
+    Engine *e = &a->eng;
+    if (t < 0 || t >= N_TRACKS) return;
+    if (!e->sample_path[t][0]) { sampler_apply_pitch(a, t, NULL, 0); return; }
+
+    int idx = samplebank_find(&a->live_bank, e->sample_path[t]);
+    if (idx < 0) { sampler_apply_pitch(a, t, NULL, 0); return; }
+    int len = 0;
+    const float *data = samplebank_data(&a->live_bank, idx, &len);
+    sampler_apply_pitch(a, t, data, len);
+}
 
 /* ------------------------------------------------------------ persistence */
 
@@ -541,6 +584,11 @@ static void draw_shortcut_overlay(App *a)
 
     cv_text(c, px + 16, py + ph - 18,
             "RELEASE THE SHOULDER TO CLOSE", 1, C_TEXT_DIM);
+    if (sh == SH_L1) {
+        const char *face = "X: PITCH";
+        cv_text(c, px + pw - cv_text_w(face, 1) - 16, py + ph - 18,
+                face, 1, C_TEXT);
+    }
 }
 
 static void draw_sample_browser(App *a)
@@ -1213,10 +1261,15 @@ static void draw_ui(App *a)
         cv_text(c, 22, y, TRACKS[t].label, 1,
                 muted ? cv_dim(TRACKS[t].color, 0.40f)
                       : (on_row ? TRACKS[t].color : C_TEXT_DIM));
+        if (e->pitch[t] != 0) {
+            char pt[8];
+            snprintf(pt, sizeof pt, "%+d", pitch_clamp(e->pitch[t]));
+            cv_text(c, 40, y, pt, 1, muted ? cv_dim(C_LED, 0.45f) : C_LED);
+        }
         if (e->sample_missing[t])
-            cv_text(c, 52, y, "!", 1, C_WARN);
-        if (muted)
-            cv_text(c, 64, y, "M", 1, C_LED);
+            cv_text(c, 66, y, "!", 1, C_WARN);
+        else if (muted)
+            cv_text(c, 66, y, "M", 1, C_LED);
     }
 
     /* cells (edit) / ratchet editor (rch) */
@@ -1392,6 +1445,9 @@ static void draw_ui(App *a)
         snprintf(tbuf, sizeof tbuf, "%d STEPS", engine_length_clamp(e->length));
         cv_text(c, mx + 12, my + 34, tbuf, 2, C_TEXT);
         cv_text(c, mx + 12, my + 62, "UD:+-1  LR:+-4  A/B:OK", 1, C_TEXT_DIM);
+    } else if (a->mode == MODE_PITCH) {
+        ViewCtx v = view_ctx(a);
+        rg_draw_pitch_page(&v);
     }
 
     draw_shortcut_overlay(a);
@@ -1453,6 +1509,7 @@ static void sampler_live_reload(App *a)
     sampler_wait_callback(a);
 
     samplebank_clear(&a->live_bank);
+    pitch_cache_clear(&a->live_pitch);
     for (int t = 0; t < N_TRACKS; t++) {
         Engine *e = &a->eng;
         e->sample_data[t] = NULL;
@@ -1466,9 +1523,10 @@ static void sampler_live_reload(App *a)
             continue;
         }
         int len = 0;
-        e->sample_data[t] = samplebank_data(&a->live_bank, idx, &len);
-        e->sample_len[t] = len;
+        const float *data = samplebank_data(&a->live_bank, idx, &len);
+        sampler_apply_pitch(a, t, data, len);
     }
+    if (a->live_pitch.overflow) set_msg(a, "PITCH CACHE FULL - UNPITCHED");
 }
 
 static void sampler_preview_path(App *a, const char *rel)
@@ -1639,13 +1697,15 @@ static SongSet *song_prepare(App *a, int *missing_out)
     engine_kill_all_voices(&a->eng);
     sampler_wait_callback(a);
     samplebank_clear(&a->song_bank);
+    pitch_cache_clear(&a->song_pitch);
 
     int idx = 1 - a->song_set_active;
     SongSet *set = a->song_sets[idx];
     int missing = song_build_set(&a->song, &a->lib, set);
     if (missing < 0) return NULL;
 
-    int smissed = song_load_samples(set, &a->song_bank, a->assets_root);
+    int smissed = song_load_samples(set, &a->song_bank, a->assets_root,
+                                   &a->song_pitch);
     if (smissed == -2) {
         a->song_bank_error = 1;
         set_msg(a, "SONG SAMPLE SET TOO LARGE");
@@ -2569,6 +2629,34 @@ static void act(App *a, int act)
         default: break;
         }
         break;
+    case MODE_PITCH: {
+        ViewCtx v = view_ctx(a);
+        int changed = 0;
+        switch (act) {
+        case ACT_UP:
+        case ACT_DOWN:
+        case ACT_LEFT:
+        case ACT_RIGHT:
+            changed = rg_pitch_page_action(&v, act);
+            break;
+        case ACT_CONFIRM:                      /* A auditions the new interval */
+        case ACT_HEAR:
+            engine_preview(e, a->cur_track, 0, RCH_OFF, LVL_ON);
+            break;
+        case ACT_BACK:
+        case ACT_MENU:
+            a->mode = MODE_EDIT;
+            break;
+        default:
+            break;
+        }
+        if (changed) {
+            a->dirty = 1;
+            sampler_repatch(a, a->cur_track);
+            engine_preview(e, a->cur_track, 0, RCH_OFF, LVL_ON);
+        }
+        break;
+    }
     case MODE_SAMPLE:
         switch (act) {
         case ACT_UP:
@@ -3129,6 +3217,7 @@ static int input_dir(App *a, int ad)
 
 /* Headless check of the shoulder shortcut map (`--test-shortcuts`). */
 static void handle_trigger_axis(App *a, int sh, int val);
+static void handle_gc_button(App *a, int button, int down);
 
 static int test_shortcuts_run(App *a)
 {
@@ -3186,6 +3275,20 @@ static int test_shortcuts_run(App *a)
     CHECK(a->mode == MODE_RCH, "L1+Down opens ratchet notes");
     handle_shoulder(a, SH_L1, 0);
     a->sh_suppress = 0;
+
+    a->mode = MODE_EDIT;
+    a->cur_track = 1;
+    a->eng.pitch[1] = 0;
+    handle_shoulder(a, SH_L1, 1);
+    handle_gc_button(a, SDL_CONTROLLER_BUTTON_X, 1);
+    CHECK(a->mode == MODE_PITCH, "L1+X opens the pitch page");
+    act(a, ACT_UP);
+    CHECK(a->eng.pitch[1] == 1, "the pitch page edits the selected track");
+    act(a, ACT_BACK);
+    handle_gc_button(a, SDL_CONTROLLER_BUTTON_X, 0);
+    handle_shoulder(a, SH_L1, 0);
+    a->sh_suppress = 0;
+    a->eng.pitch[1] = 0;
 
     a->mode = MODE_EDIT;
     handle_shoulder(a, SH_L2, 1);
@@ -3999,8 +4102,23 @@ static void gc_note_mapping(SDL_GameController *gc)
     }
 }
 
+/* L1 + X opens the pitch page for the selected track ("key" is the shell's X
+ * identifier: the controller button, the raw joystick number or the key). */
+static int shortcut_pitch(App *a, int is_x)
+{
+    if (!is_x) return 0;
+    if (a->sh_suppress || !shortcuts_enabled(a)) return 0;
+    if (active_shoulder(a) != SH_L1) return 0;
+    if (a->eng.song_playing) stop_playback(a);
+    a->mode = MODE_PITCH;
+    a->sh_suppress = 1;               /* hint hides until the shoulder is up */
+    a->shortcut_until = 0;
+    return 1;
+}
+
 static void handle_key(App *a, SDL_Keycode k)
 {
+    if (shortcut_pitch(a, k == SDLK_c)) return;
     if (punch_enabled(a)) {
         int eff = punch_for_key(k);
         if (eff >= 0) { punch_press(a, eff); return; }
@@ -4076,6 +4194,8 @@ static void handle_gc_button(App *a, int button, int down)
         }
     }
 
+    if (down && shortcut_pitch(a, button == SDL_CONTROLLER_BUTTON_X)) return;
+
     if (down) {
         switch (button) {
         case SDL_CONTROLLER_BUTTON_A:
@@ -4129,6 +4249,7 @@ static void handle_joy_button(App *a, int button, int down)
             return;
         }
     }
+    if (down && shortcut_pitch(a, button == 2)) return;   /* L1 + X */
     if (!down) {
         if (button == 0) edit_a_up(a);
         return;
@@ -4320,7 +4441,7 @@ static int test_sampler_run(App *a)
         set->count = 1;
         pattern_default_snapshot(&set->pat[0]);
         snprintf(set->pat[0].sample_path[0], SAMPLE_PATH_MAX, "%s", "a.wav");
-        CHECK(song_load_samples(set, &bank, root) == 0 &&
+        CHECK(song_load_samples(set, &bank, root, NULL) == 0 &&
               set->pat[0].sample[0] != NULL,
               "song snapshot resolves its sample bank");
         samplebank_clear(&bank);
@@ -4454,7 +4575,87 @@ static int test_punch_run(App *a)
 #undef CHECK
 }
 
+/* Headless pitch checks (`--test-pitch`). */
+static int test_pitch_run(App *a)
+{
+    int fails = 0;
+    SDL_Init(SDL_INIT_TIMER);
+
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    CHECK(pitch_selftest(44100) == 0, "pitch DSP self-test");
+
+    /* Page actions: one semitone per tap, an octave on left/right, clamped. */
+    a->cur_track = 3;
+    ViewCtx v = view_ctx(a);
+    v.track = 3;
+    a->eng.pitch[3] = 0;
+    CHECK(rg_pitch_page_action(&v, RGV_UP) == 1 && a->eng.pitch[3] == 1,
+          "up moves one semitone");
+    CHECK(rg_pitch_page_action(&v, RGV_RIGHT) == 1 && a->eng.pitch[3] == 13,
+          "right moves an octave");
+    rg_pitch_page_action(&v, RGV_RIGHT);
+    rg_pitch_page_action(&v, RGV_RIGHT);
+    CHECK(a->eng.pitch[3] == PITCH_MAX, "the interval stops at +24");
+    CHECK(rg_pitch_page_action(&v, RGV_RIGHT) == 0,
+          "a clamped action reports no change");
+    for (int i = 0; i < 5; i++) rg_pitch_page_action(&v, RGV_LEFT);
+    CHECK(a->eng.pitch[3] == PITCH_MIN, "the interval stops at -24");
+    a->eng.pitch[3] = 0;
+
+    /* Persistence: per-track PIT lines, legacy files stay untouched. */
+    char path[1200];
+    snprintf(path, sizeof path, "%s/pitch-test.txt", a->lib.conf_dir);
+    for (int t = 0; t < N_TRACKS; t++) a->eng.pitch[t] = 0;
+    a->eng.pitch[0] = -7;
+    a->eng.pitch[5] = 24;
+    CHECK(pattern_save_file(&a->eng, path) == 0, "a pitched pattern saves");
+    Engine r;
+    engine_init(&r, 44100);
+    CHECK(pattern_load_file(&r, path) == 0, "a pitched pattern loads");
+    CHECK(r.pitch[0] == -7 && r.pitch[5] == 24 && r.pitch[1] == 0,
+          "pitch round-trips per track");
+
+    FILE *f = fopen(path, "r");
+    if (f) {
+        char line[512];
+        int saw = 0;
+        while (fgets(line, sizeof line, f))
+            if (!strncmp(line, "PIT ", 4) && strstr(line, "-7")) saw = 1;
+        fclose(f);
+        CHECK(saw, "PIT lines are written in the pattern file");
+    } else {
+        CHECK(0, "pitch pattern reopens");
+    }
+
+    f = fopen(path, "w");
+    if (f) {                                  /* legacy file + a clamped value */
+        fprintf(f, "%s\nBPM 120.00\nPIT 01 -99\nPIT 02 99\n", machine_pattern_magic());
+        fprintf(f, "01 1000000000000000\n02 1000000000000000\n");
+        fclose(f);
+        Engine q;
+        engine_init(&q, 44100);
+        CHECK(pattern_load_file(&q, path) == 0, "a legacy file with PIT loads");
+        CHECK(q.pitch[0] == PITCH_MIN && q.pitch[1] == PITCH_MAX,
+              "PIT values are clamped on load");
+        CHECK(q.pitch[2] == 0, "tracks without a PIT line stay unpitched");
+        engine_free(&q);
+    } else {
+        CHECK(0, "pitch pattern writes");
+    }
+    remove(path);
+    engine_free(&r);
+
+    SDL_Quit();
+    return fails ? 1 : 0;
+#undef CHECK
+}
+
 /* ---------------------------------------------------------------- bounce */
+
 
 static int run_bounce(App *a, const char *outpath, int loops)
 {
@@ -4527,6 +4728,7 @@ int main(int argc, char **argv)
     int test_pattern = 0;
     int test_swing = 0;
     int test_levels = 0;
+    int test_pitch = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -4550,11 +4752,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--test-pattern")) test_pattern = 1;
         else if (!strcmp(argv[i], "--test-swing")) test_swing = 1;
         else if (!strcmp(argv[i], "--test-levels")) test_levels = 1;
+        else if (!strcmp(argv[i], "--test-pitch")) test_pitch = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
-                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-sampler] [--test-pattern] [--test-swing] [--test-levels]"
-                   " [--screenshot out.bmp [--mode edit|mute|punch|sampler|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|exportconfirm|vol|l1|l2|r1|r2]]\n");
+                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-sampler] [--test-pattern] [--test-swing] [--test-levels] [--test-pitch]"
+                   " [--screenshot out.bmp [--mode edit|mute|punch|sampler|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|exportconfirm|pitch|vol|l1|l2|r1|r2]]\n");
             return 0;
         }
     }
@@ -4572,6 +4775,10 @@ int main(int argc, char **argv)
     samplebank_init(&a.live_bank, 44100, N_TRACKS, 64u * 1024u * 1024u);
     samplebank_init(&a.song_bank, 44100, SAMPLE_BANK_MAX, 64u * 1024u * 1024u);
     samplebank_init(&a.preview_bank, 44100, 128, 64u * 1024u * 1024u);
+    /* Rendered transposes: a track or a song bar can carry its own interval,
+     * so the cache is bounded rather than tied to a track. */
+    pitch_cache_init(&a.live_pitch, 44100, 32, 24u * 1024u * 1024u);
+    pitch_cache_init(&a.song_pitch, 44100, 96, 48u * 1024u * 1024u);
 
     if (test_shortcuts) {
         SDL_free(base);
@@ -4588,10 +4795,10 @@ int main(int argc, char **argv)
         return fails ? 1 : 0;
     }
 
-    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch || test_sampler || test_pattern || test_levels) {
+    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch || test_sampler || test_pattern || test_levels || test_pitch) {
         resolve_conf(&a, base ? base : ".");
         if (!test_song && !test_length && !test_fx && !test_mute &&
-            !test_punch && !test_sampler)
+            !test_punch && !test_sampler && !test_pitch)
             install_default_pattern(&a);
         load_fx_settings(&a);
         if (pattern_arg >= 1 && pattern_arg <= PAT_MAX_SLOTS)
@@ -4606,6 +4813,7 @@ int main(int argc, char **argv)
         if (test_sampler) return test_sampler_run(&a);
         if (test_pattern) return test_pattern_run(&a);
         if (test_levels) return test_levels_run(&a);
+        if (test_pitch) return test_pitch_run(&a);
 
         if (save_slot_set) {
             engine_free(&a.eng);
@@ -4642,7 +4850,8 @@ int main(int argc, char **argv)
             if (!set) return 1;
             int missing = song_build_set(&a.song, &a.lib, set);
             samplebank_clear(&a.song_bank);
-            int smissed = song_load_samples(set, &a.song_bank, a.assets_root);
+            int smissed = song_load_samples(set, &a.song_bank, a.assets_root,
+                                           &a.song_pitch);
             if (smissed == -2) {
                 fprintf(stderr, "rg808: song sample set too large\n");
                 free(set);
@@ -4739,6 +4948,11 @@ int main(int argc, char **argv)
                 a.shortcut_until = SDL_GetTicks() + 60000;
             }
             else if (!strcmp(mode_arg, "sampler")) sample_browser_open(&a);
+            else if (!strcmp(mode_arg, "pitch")) {
+                a.mode = MODE_PITCH;
+                a.cur_track = 2;
+                a.eng.pitch[2] = 7;
+            }
             else if (!strcmp(mode_arg, "vol")) {
                 a.mode = MODE_VOL;
                 step_ui_init(&a.step_ui);

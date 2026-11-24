@@ -53,6 +53,7 @@ rg808.exe --test-song                   # headless song checks
 rg808.exe --test-length                 # headless pattern-length checks
 rg808.exe --test-fx                     # headless effects checks
 rg808.exe --test-mute                   # headless performance-mute checks
+rg808.exe --test-pitch                  # headless transpose DSP / cache / PIT checks
 rg808.exe --test-punch                  # headless punch-in FX checks
 rg808.exe --screenshot shot.bmp         # render one UI frame to BMP
 rg808.exe --screenshot p.bmp --mode pattern   # pattern browser frame
@@ -119,6 +120,7 @@ cheat sheet for that button. The assigned combinations are:
 | L1 + Right | Swing |
 | L1 + Up | Pattern length |
 | L1 + Down | Ratchet notes |
+| L1 + X | Pitch / transpose the selected track |
 | L2 + Left | Pattern library |
 | L2 + Right | Song mode |
 | L2 + Up | Sample/kit selection |
@@ -132,6 +134,15 @@ cheat sheet for that button. The assigned combinations are:
 
 All L2 combinations are mapped. Pressing a shoulder shows the hint; releasing
 it hides the hint immediately.
+
+**Pitch**: L1 + X opens the pitch page for the selected track. Up/down move one
+semitone, left/right a whole octave, A auditions and B returns; the range is
+-24..+24 semitones. The shift is time-stretched, so the voice keeps its
+duration and the groove stays put - the sample is re-rendered once when the
+value changes and cached, so playback costs nothing. The interval is stored
+with the pattern (`PIT` lines), so every song bar can transpose on its own, and
+the track row shows it next to the label (`+7`). Rendering a long sample takes
+a moment; the transport keeps running while it happens.
 
 **Mute**: in the sequencer, Y toggles a performance mute for the selected
 instrument; X still auditions it. Muted rows are tinted and marked with a red
@@ -203,9 +214,10 @@ Your pattern and tempo are saved automatically on quit (menu: QUIT) and can be
 saved/loaded manually. Patterns live in `conf/patterns/NNN.txt`, with slot
 names and the active slot in `conf/patterns/index.txt`; the song chain lives
 in `conf/song.txt` inside the port folder on the card. Pattern files include
-their FX chain; `conf/fx.txt` supplies the fallback chain for older patterns
-without FX lines. Writes go to a temp file, are flushed, then renamed into
-place, so an interrupted save never truncates a pattern or song.
+their FX chain and one `PIT <track> <semitones>` line per transposed track;
+`conf/fx.txt` supplies the fallback chain for older patterns without FX lines.
+Writes go to a temp file, are flushed, then renamed into place, so an
+interrupted save never truncates a pattern or song.
 
 ## Kit mapping
 Each voice ships its whole variant family from the pack as `<id>NN.wav`

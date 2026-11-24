@@ -2,6 +2,7 @@
  * The shared core owns sequencing, patterns, songs and FX. */
 #include "engine.h"
 #include "machine.h"
+#include "pitch.h"
 #include "samples.h"
 #include "views/view_keys.h"
 
@@ -35,11 +36,49 @@ const char *machine_shortcut_label(int sh, int dir)
     return NULL;
 }
 
+/* Rendered transposes of the kit samples. The kit itself never changes after
+ * startup, so the keys are stable and the cache needs no invalidation; the
+ * live engine and the song snapshots share it, which keeps a song bar that
+ * repeats an interval from rendering twice. */
+static PitchCache kit_pitch;
+static int kit_pitch_ready;
+
+static void kit_pitch_init(void)
+{
+    if (kit_pitch_ready) return;
+    pitch_cache_init(&kit_pitch, 44100, 64, 24u * 1024u * 1024u);
+    kit_pitch_ready = 1;
+}
+
+/* Resolve one track, transposed when the pattern asks for it. */
+static void resolve_track(Engine *e, int t, int variant)
+{
+    char key[64];
+    snprintf(key, sizeof key, "%s:%d", TRACKS[t].id, variant);
+
+    int len = 0;
+    const float *data = sample_get(t, variant, &len);
+    e->sample_data[t] = data;
+    e->sample_len[t] = len;
+    e->sample_missing[t] = data ? 0 : 1;
+
+    int st = pitch_clamp(e->pitch[t]);
+    if (!data || len <= 0 || st == 0) return;
+    kit_pitch_init();
+    int plen = 0;
+    const float *p = pitch_cache_get(&kit_pitch, key, data, len, st, &plen);
+    if (p && plen > 0) {
+        e->sample_data[t] = p;
+        e->sample_len[t] = plen;
+    }
+}
+
 void machine_init_engine(Engine *e)
 {
     e->track_voice_limit = 0;   /* global-oldest stealing, as before */
     for (int t = 0; t < N_TRACKS; t++) {
         e->kit[t] = TRACKS[t].dflt - 1;
+        e->pitch[t] = 0;
         e->sample_path[t][0] = 0;
         e->sample_data[t] = NULL;
         e->sample_len[t] = 0;
@@ -52,13 +91,8 @@ void machine_init_engine(Engine *e)
 
 void machine_resolve_live(Engine *e)
 {
-    for (int t = 0; t < N_TRACKS; t++) {
-        int len = 0;
-        const float *data = sample_get(t, e->kit[t], &len);
-        e->sample_data[t] = data;
-        e->sample_len[t] = data ? len : 0;
-        e->sample_missing[t] = data ? 0 : 1;
-    }
+    for (int t = 0; t < N_TRACKS; t++)
+        resolve_track(e, t, e->kit[t]);
 }
 
 void machine_after_load(Engine *e)
@@ -78,6 +112,7 @@ void machine_default_snapshot(PatternSnapshot *s)
 {
     for (int t = 0; t < N_TRACKS; t++) {
         s->kit[t] = TRACKS[t].dflt - 1;
+        s->pitch[t] = 0;
         s->sample_path[t][0] = 0;
     }
 }
@@ -85,10 +120,25 @@ void machine_default_snapshot(PatternSnapshot *s)
 void machine_resolve_snapshot(PatternSnapshot *s)
 {
     for (int t = 0; t < N_TRACKS; t++) {
+        char key[64];
+        snprintf(key, sizeof key, "%s:%d", TRACKS[t].id, s->kit[t]);
+
         int len = 0;
         const float *data = sample_get(t, s->kit[t], &len);
         s->sample[t] = data;
-        s->sample_len[t] = data ? len : 0;
+        s->sample_len[t] = len;
+
+        /* A snapshot must not touch the engine, so resolve the transpose
+         * through the cache directly. */
+        int st = pitch_clamp(s->pitch[t]);
+        if (!data || len <= 0 || st == 0) continue;
+        kit_pitch_init();
+        int plen = 0;
+        const float *p = pitch_cache_get(&kit_pitch, key, data, len, st, &plen);
+        if (p && plen > 0) {
+            s->sample[t] = p;
+            s->sample_len[t] = plen;
+        }
     }
 }
 

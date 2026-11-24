@@ -13,12 +13,14 @@ set(CORE_SOURCES
     src/core/engine.c
     src/core/canvas.c
     src/core/wav.c
+    src/core/pitch.c
     src/core/pattern.c
     src/core/song.c
     src/core/fx.c
     src/core/perf_fx.c
     src/core/step_ui.c
     src/core/views/views.c
+    src/core/views/pitch_view.c
 )
 
 if (RG_MACHINE STREQUAL "808")

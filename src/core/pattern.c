@@ -4,6 +4,7 @@
 #endif
 #include "pattern.h"
 #include "fx.h"
+#include "pitch.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -337,6 +338,7 @@ static void copy_snapshot_to_engine(Engine *e, const PatternSnapshot *s)
             e->rch[t][st] = s->rch[t][st];
         }
         e->kit[t] = s->kit[t];
+        e->pitch[t] = pitch_clamp(s->pitch[t]);
         snprintf(e->sample_path[t], sizeof e->sample_path[t], "%s",
                  s->sample_path[t]);
         e->sample_data[t] = NULL;
@@ -373,6 +375,19 @@ static int parse_pattern_stream(FILE *f, PatternSnapshot *s)
             } else if (!strncmp(line, "LEN ", 4)) {
                 s->length = engine_length_clamp(atoi(line + 4));
                 got_any = 1;
+            } else if (!strncmp(line, "PIT ", 4)) {
+                if (sscanf(line + 4, "%4s", lab) == 1) {
+                    int st = 0;
+                    char *p = strchr(line + 4, ' ');
+                    if (p) st = pitch_clamp(atoi(p + 1));
+                    for (int t = 0; t < N_TRACKS; t++) {
+                        if (!strcmp(lab, TRACKS[t].label)) {
+                            s->pitch[t] = st;
+                            got_any = 1;
+                            break;
+                        }
+                    }
+                }
             } else if (!strncmp(line, "VLV ", 4)) {
                 if (sscanf(line + 4, "%4s", lab) == 1) {
                     for (int t = 0; t < N_TRACKS; t++) {
@@ -433,6 +448,9 @@ static int write_pattern_stream(FILE *f, Engine *e)
     fprintf(f, "%s\n", machine_pattern_magic());
     fprintf(f, "BPM %.2f\n", e->bpm_x100 / 100.0);
     machine_write_sample_lines(f, e);
+    for (int t = 0; t < N_TRACKS; t++)
+        if (e->pitch[t] != 0)
+            fprintf(f, "PIT %s %d\n", TRACKS[t].label, pitch_clamp(e->pitch[t]));
     for (int t = 0; t < N_TRACKS; t++) {
         fprintf(f, "%s ", TRACKS[t].label);
         for (int s = 0; s < N_STEPS; s++) {
