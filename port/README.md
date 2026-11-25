@@ -6,7 +6,7 @@ accents, sample-accurate timing, a 200-slot pattern library, 512-bar song
 chains with WAV export, a master effects chain, per-track mute and held R1
 punch-in FX. Written in C with SDL2; runs natively at 640x480.
 
-**RG-SMP 1.0** — first stable release (2026-11-15). RG-808 ships as 1.0 from
+**RG-SMP 1.0** â€” first stable release (2026-11-15). RG-808 ships as 1.0 from
 the `master` branch.
 
 > **Disclaimer: this project was made with AI.** All of the source code, build
@@ -48,6 +48,7 @@ The first launch installs a factory 909 groove named `DEFAULT` into slot 001
 Shoulder shortcuts (hold + D-pad):
 L1+Left = tempo, L1+Right = swing, L1+Up = pattern length,
 L1+Down = ratchet notes, L1+X = pitch (transpose the selected track),
+L1+B = sample start/end (slice the step),
 L2+Left = pattern library, L2+Right = song mode,
 L2+Up = sample browser, L2+Down = export song to WAV (with a confirmation
 page), R2+Up = drive FX, R2+Left = modulation FX,
@@ -59,6 +60,11 @@ semitone, left/right a whole octave, A auditions, B returns; the range is
 -24..+24. The sample is time-stretched, so its length - and the beat - stays
 put. The interval is saved with the pattern and shown next to the track label
 (+7); each song bar can transpose on its own.
+
+Slice: L1+B opens the start/end page for the selected step. Left/right picks
+the step, up/down nudges the value (hundredths of a percent, coarser while
+held), A swaps START/END, X auditions. Each of the 16 steps can play its own
+cut of the track's sample; the points are stored with the pattern (TRM lines).
 
 R1 punch-in FX: hold R1 and press Left/Right/Up/Down for 1/4, 1/8, 1/16 or
 1/32 stutter loops; A = 1/4 rewind, B = 1/16 gate, X = tape stop (one 1/8

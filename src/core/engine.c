@@ -78,6 +78,11 @@ void engine_init(Engine *e, int rate)
     e->step_prev = -1;
     e->bpm_x100 = 12000;
     e->length = N_STEPS;
+    for (int t = 0; t < N_TRACKS; t++)
+        for (int s = 0; s < N_STEPS; s++) {
+            e->trim_s[t][s] = 0;
+            e->trim_e[t][s] = 10000;
+        }
     e->next_step = 0;
     machine_init_engine(e);
 
@@ -130,16 +135,56 @@ static Voice *alloc_voice(Engine *e, int track)
     return best;
 }
 
+/* Map a step's start/end percentages (0.01 % units) onto frames. */
+void engine_slice(int sample_len, int trim_s, int trim_e,
+                  int *start, int *count)
+{
+    if (sample_len <= 0) {
+        *start = 0;
+        *count = 0;
+        return;
+    }
+    if (trim_s < 0) trim_s = 0;
+    if (trim_s > 10000) trim_s = 10000;
+    if (trim_e < 0) trim_e = 0;
+    if (trim_e > 10000) trim_e = 10000;
+
+    int s = (int)((long long)sample_len * trim_s / 10000);
+    int e = (int)((long long)sample_len * trim_e / 10000);
+    if (s > sample_len - 1) s = sample_len - 1;
+    if (e > sample_len) e = sample_len;
+    if (e <= s) e = s + 1;               /* at least one frame */
+    if (e > sample_len) {
+        e = sample_len;
+        s = e - 1;
+    }
+    *start = s;
+    *count = e - s;
+}
+
 static void fire(Engine *e, int track, const float *data, int len,
-                 float level_gain, int delay)
+                 float level_gain, int delay, int trim_s, int trim_e)
 {
     if (!data || len <= 0) return;
     Voice *v = alloc_voice(e, track);
     if (!v) return;
-    v->data = data; v->len = len; v->pos = 0;
+
+    int start = 0, count = 0;
+    engine_slice(len, trim_s, trim_e, &start, &count);
+    if (count <= 0) return;
+
+    /* A cut at an arbitrary point leaves a step in the waveform, so a
+     * trimmed end gets a short fade-out (and a trimmed start a fade-in). */
+    int fade = e->rate / 500;            /* 2 ms */
+    if (fade > count / 4) fade = count / 4;
+
+    v->data = data; v->len = len;
+    v->start = start; v->slice = count; v->pos = 0;
     v->delay = delay;
     v->gain = level_gain * TRACKS[track].gain;
     v->track = track;
+    v->fade_in = start > 0 ? fade : 0;
+    v->fade_out = trim_e < 10000 ? fade : 0;
     e->voice_fire[v - e->voices] = e->total_pos;
 }
 
@@ -152,6 +197,22 @@ void engine_preview_data(Engine *e, int track, const float *data, int len,
         e->preview_len = len;
         e->preview_rch = rch;
         e->preview_lvl = lvl;
+        e->preview_trim_s = 0;
+        e->preview_trim_e = 10000;
+        e->preview_track = track + 1;
+    }
+}
+
+void engine_preview_slice(Engine *e, int track, const float *data, int len,
+                          int rch, int lvl, int trim_s, int trim_e)
+{
+    if (track >= 0 && track < N_TRACKS && data && len > 0) {
+        e->preview_data = data;
+        e->preview_len = len;
+        e->preview_rch = rch;
+        e->preview_lvl = lvl;
+        e->preview_trim_s = trim_s;
+        e->preview_trim_e = trim_e;
         e->preview_track = track + 1;
     }
 }
@@ -162,6 +223,19 @@ void engine_preview(Engine *e, int track, int variant, int rch, int lvl)
     int len = 0;
     const float *data = machine_sample_for(e, track, variant, &len);
     engine_preview_data(e, track, data, len, rch, lvl);
+}
+
+void engine_preview_at(Engine *e, int track, int variant, int rch, int lvl, int step)
+{
+    if (track < 0 || track >= N_TRACKS) return;
+    if (step < 0 || step >= N_STEPS) {
+        engine_preview(e, track, variant, rch, lvl);
+        return;
+    }
+    int len = 0;
+    const float *data = machine_sample_for(e, track, variant, &len);
+    engine_preview_slice(e, track, data, len, rch, lvl,
+                         e->trim_s[track][step], e->trim_e[track][step]);
 }
 
 /* 808 kit selection: store the variant and resolve it to a sample pointer.
@@ -220,26 +294,28 @@ int engine_punch_pending(const Engine *e)
 
 /* Schedule hit(s) for one voice: straight, ratchet roll (2/3/4 even subs) or
  * flam (quiet grace at the boundary, main ~14 ms later). Delays may exceed the
- * current buffer — voices carry their delay across callbacks. */
+ * current buffer â€” voices carry their delay across callbacks. Every sub-hit
+ * of a step plays the same slice. */
 static void fire_sched(Engine *e, int track, const float *data, int len,
-                       float gain, int delay, int rch, double sps)
+                       float gain, int delay, int rch, double sps,
+                       int trim_s, int trim_e)
 {
     switch (rch) {
     case RCH_2:
-        for (int k = 0; k < 2; k++) fire(e, track, data, len, gain, delay + (int)(k * sps / 2.0));
+        for (int k = 0; k < 2; k++) fire(e, track, data, len, gain, delay + (int)(k * sps / 2.0), trim_s, trim_e);
         return;
     case RCH_3:
-        for (int k = 0; k < 3; k++) fire(e, track, data, len, gain, delay + (int)(k * sps / 3.0));
+        for (int k = 0; k < 3; k++) fire(e, track, data, len, gain, delay + (int)(k * sps / 3.0), trim_s, trim_e);
         return;
     case RCH_4:
-        for (int k = 0; k < 4; k++) fire(e, track, data, len, gain, delay + (int)(k * sps / 4.0));
+        for (int k = 0; k < 4; k++) fire(e, track, data, len, gain, delay + (int)(k * sps / 4.0), trim_s, trim_e);
         return;
     case RCH_FLAM:
-        fire(e, track, data, len, gain * 0.5f, delay);
-        fire(e, track, data, len, gain, delay + (int)(0.014 * e->rate));
+        fire(e, track, data, len, gain * 0.5f, delay, trim_s, trim_e);
+        fire(e, track, data, len, gain, delay + (int)(0.014 * e->rate), trim_s, trim_e);
         return;
     default:
-        fire(e, track, data, len, gain, delay);
+        fire(e, track, data, len, gain, delay, trim_s, trim_e);
         return;
     }
 }
@@ -278,7 +354,8 @@ void engine_fire_step(Engine *e, int step)
         unsigned char lv = e->lvl[t][step];
         if (lv > LVL_OFF && !e->mute[t])
             fire_sched(e, t, (const float *)e->sample_data[t], e->sample_len[t],
-                       lvl_gain(lv), 0, e->rch[t][step], sps);
+                       lvl_gain(lv), 0, e->rch[t][step], sps,
+                       e->trim_s[t][step], e->trim_e[t][step]);
     }
 }
 
@@ -364,7 +441,8 @@ static int mix_song_steps(Engine *e, int frames, int want_punch)
             unsigned char lv = sp->lvl[t][e->step];
             if (lv > LVL_OFF && !e->mute[t])
                 fire_sched(e, t, sp->sample[t], sp->sample_len[t], lvl_gain(lv),
-                           delay, sp->rch[t][e->step], sps);
+                           delay, sp->rch[t][e->step], sps,
+                           sp->trim_s[t][e->step], sp->trim_e[t][e->step]);
         }
         e->next_step += sps;
     }
@@ -629,10 +707,12 @@ void engine_mix(Engine *e, float *dst, int frames)
         int len = e->preview_len;
         int r = e->preview_rch;
         int l = e->preview_lvl;
+        int ts = e->preview_trim_s;
+        int te = e->preview_trim_e;
         e->preview_track = 0;
         if (t >= 0 && t < N_TRACKS)
             fire_sched(e, t, data, len, lvl_gain(l == LVL_OFF ? LVL_ACC : l),
-                       0, r, samples_per_step(e));
+                       0, r, samples_per_step(e), ts, te);
     }
 
     /* Cache the mode at buffer start: the UI may stop/start between callbacks,
@@ -666,7 +746,8 @@ void engine_mix(Engine *e, float *dst, int frames)
                     unsigned char lv = e->lvl[t][e->step];
                     if (lv > LVL_OFF && !e->mute[t])
                         fire_sched(e, t, (const float *)e->sample_data[t], e->sample_len[t],
-                                   lvl_gain(lv), at, e->rch[t][e->step], sps);
+                                   lvl_gain(lv), at, e->rch[t][e->step], sps,
+                                   e->trim_s[t][e->step], e->trim_e[t][e->step]);
                 }
                 e->next_step += sps;
             }
@@ -691,12 +772,19 @@ void engine_mix(Engine *e, float *dst, int frames)
             f = skip;
         }
         for (; f < frames; f++) {
-            if (v->pos >= v->len) break;
-            float s = v->data[v->pos++] * v->gain;
+            if (v->pos >= v->slice) break;
+            float s = v->data[v->start + v->pos] * v->gain;
+            if (v->fade_in && v->pos < v->fade_in)
+                s *= (float)v->pos / (float)v->fade_in;
+            if (v->fade_out) {
+                int rem = v->slice - 1 - v->pos;
+                if (rem < v->fade_out) s *= (float)rem / (float)v->fade_out;
+            }
+            v->pos++;
             dst[2*f] += s;
             dst[2*f+1] += s;
         }
-        if (v->pos >= v->len && v->delay <= 0) v->data = NULL;
+        if (v->pos >= v->slice && v->delay <= 0) v->data = NULL;
     }
 
     /* master effects, before master gain + soft clip. The delay's tempo sync

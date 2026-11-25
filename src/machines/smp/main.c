@@ -27,6 +27,7 @@
 #include "pitch.h"
 #include "views/views.h"
 #include "views/pitch_view.h"
+#include "views/slice_view.h"
 
 #define SCR_W 640
 #define SCR_H 480
@@ -56,7 +57,7 @@
 enum Mode { MODE_EDIT, MODE_MENU, MODE_TEMPO, MODE_SAMPLE, MODE_RCH, MODE_SWING,
             MODE_LENGTH, MODE_FX, MODE_PATTERN, MODE_PAT_ACT, MODE_RENAME,
             MODE_SONG, MODE_SONG_ACT, MODE_EXPORT_CONFIRM, MODE_EXPORT,
-            MODE_PITCH, MODE_VOL };
+            MODE_PITCH, MODE_SLICE, MODE_VOL };
 
 enum Action {
     ACT_NONE, ACT_UP, ACT_DOWN, ACT_LEFT, ACT_RIGHT,
@@ -76,6 +77,8 @@ typedef struct {
     SampleBank preview_bank;
     PitchCache live_pitch;            /* rendered transposes for the live bank */
     PitchCache song_pitch;            /* ... and for the song bank */
+    RgWave wave;                      /* peak envelope for the slice page */
+    SliceUi slice;                    /* slice page cursor/handle */
     char assets_root[1400];
     char sample_dir[SAMPLE_PATH_MAX];
     SampleDirEntry sample_list[SAMPLE_LIST_MAX];
@@ -247,6 +250,28 @@ static void sampler_repatch(App *a, int t)
     int len = 0;
     const float *data = samplebank_data(&a->live_bank, idx, &len);
     sampler_apply_pitch(a, t, data, len);
+}
+
+/* Slice page (L1+B): build the waveform and audition the step being edited. */
+static void slice_audition(App *a)
+{
+    Engine *e = &a->eng;
+    int t = a->cur_track;
+    int s = a->slice.step;
+    if (t < 0 || t >= N_TRACKS) return;
+    if (s < 0 || s >= N_STEPS) s = 0;
+    engine_preview_slice(e, t, (const float *)e->sample_data[t], e->sample_len[t],
+                         RCH_OFF, LVL_ON, e->trim_s[t][s], e->trim_e[t][s]);
+}
+
+static void open_slice_page(App *a)
+{
+    if (a->eng.song_playing) stop_playback(a);
+    a->slice.handle = 0;
+    rg_slice_ui_open(&a->slice, a->cur_step);
+    rg_wave_build(&a->wave, (const float *)a->eng.sample_data[a->cur_track],
+                  a->eng.sample_len[a->cur_track]);
+    a->mode = MODE_SLICE;
 }
 
 /* ------------------------------------------------------------ persistence */
@@ -1344,6 +1369,9 @@ static void draw_ui(App *a)
     } else if (a->mode == MODE_PITCH) {
         ViewCtx v = view_ctx(a);
         rg_draw_pitch_page(&v);
+    } else if (a->mode == MODE_SLICE) {
+        ViewCtx v = view_ctx(a);
+        rg_draw_slice_page(&v, &a->slice, &a->wave);
     }
 
     draw_shortcut_overlay(a);
@@ -2472,14 +2500,16 @@ static void act(App *a, int act)
             unsigned char lv = (unsigned char)((e->lvl[a->cur_track][a->cur_step] + 1) % 3);
             e->lvl[a->cur_track][a->cur_step] = lv;
             a->dirty = 1;
-            if (lv) engine_preview(e, a->cur_track, 0,
-                                   e->rch[a->cur_track][a->cur_step], lv);
+            if (lv) engine_preview_at(e, a->cur_track, 0,
+                                      e->rch[a->cur_track][a->cur_step], lv,
+                                      a->cur_step);
             break;
         }
         case ACT_CLEAR: e->lvl[a->cur_track][a->cur_step] = LVL_OFF; a->dirty = 1; break;
         case ACT_HEAR:
-            engine_preview(e, a->cur_track, 0,
-                           e->rch[a->cur_track][a->cur_step], LVL_ON);
+            engine_preview_at(e, a->cur_track, 0,
+                              e->rch[a->cur_track][a->cur_step], LVL_ON,
+                              a->cur_step);
             break;
         case ACT_MUTE: {
             int t = a->cur_track;
@@ -2537,7 +2567,7 @@ static void act(App *a, int act)
             break;
         case ACT_CONFIRM:                      /* A auditions the new interval */
         case ACT_HEAR:
-            engine_preview(e, a->cur_track, 0, RCH_OFF, LVL_ON);
+            engine_preview_at(e, a->cur_track, 0, RCH_OFF, LVL_ON, a->cur_step);
             break;
         case ACT_BACK:
         case ACT_MENU:
@@ -2549,7 +2579,37 @@ static void act(App *a, int act)
         if (changed) {
             a->dirty = 1;
             sampler_repatch(a, a->cur_track);
-            engine_preview(e, a->cur_track, 0, RCH_OFF, LVL_ON);
+            engine_preview_at(e, a->cur_track, 0, RCH_OFF, LVL_ON, a->cur_step);
+        }
+        break;
+    }
+    case MODE_SLICE: {
+        ViewCtx v = view_ctx(a);
+        switch (act) {
+        case ACT_UP:
+        case ACT_DOWN:
+        case ACT_LEFT:
+        case ACT_RIGHT:
+        case ACT_CONFIRM:                  /* A swaps START/END */
+            if (rg_slice_page_action(&v, &a->slice, act)) {
+                a->dirty = 1;
+                a->cur_step = a->slice.step;
+                slice_audition(a);
+            }
+            break;
+        case ACT_HEAR:
+            slice_audition(a);
+            break;
+        case ACT_PLAY:
+            toggle_edit_play(a);
+            break;
+        case ACT_BACK:
+        case ACT_MENU:
+            a->cur_step = a->slice.step;
+            a->mode = MODE_EDIT;
+            break;
+        default:
+            break;
         }
         break;
     }
@@ -2695,8 +2755,9 @@ static void act(App *a, int act)
             unsigned char r = (unsigned char)((e->rch[t][a->cur_step] + 1) % RCH_COUNT);
             e->rch[t][a->cur_step] = r;
             a->dirty = 1;
-            engine_preview(e, t, 0, r,
-                           e->lvl[t][a->cur_step] ? e->lvl[t][a->cur_step] : LVL_ON);
+            engine_preview_at(e, t, 0, r,
+                              e->lvl[t][a->cur_step] ? e->lvl[t][a->cur_step] : LVL_ON,
+                              a->cur_step);
             break;
         }
         case ACT_CLEAR:
@@ -2704,8 +2765,9 @@ static void act(App *a, int act)
             break;
         case ACT_HEAR:
         case ACT_MUTE:
-            engine_preview(e, t, 0, e->rch[t][a->cur_step],
-                           e->lvl[t][a->cur_step] ? e->lvl[t][a->cur_step] : LVL_ON);
+            engine_preview_at(e, t, 0, e->rch[t][a->cur_step],
+                              e->lvl[t][a->cur_step] ? e->lvl[t][a->cur_step] : LVL_ON,
+                              a->cur_step);
             break;
         case ACT_PLAY:
             toggle_edit_play(a);
@@ -4005,15 +4067,19 @@ static void gc_note_mapping(SDL_GameController *gc)
     }
 }
 
-/* L1 + X opens the pitch page for the selected track ("key" is the shell's X
- * identifier: the controller button, the raw joystick number or the key). */
-static int shortcut_pitch(App *a, int is_x)
+/* L1 + X opens the pitch page, L1 + B the slice page. */
+static void open_slice_page(App *a);
+
+static int shortcut_face_button(App *a, int face)
 {
-    if (!is_x) return 0;
     if (a->sh_suppress || !shortcuts_enabled(a)) return 0;
     if (active_shoulder(a) != SH_L1) return 0;
+    if (face != RGFACE_X && face != RGFACE_B) return 0;
     if (a->eng.song_playing) stop_playback(a);
-    a->mode = MODE_PITCH;
+    if (face == RGFACE_X)
+        a->mode = MODE_PITCH;
+    else
+        open_slice_page(a);
     a->sh_suppress = 1;               /* hint hides until the shoulder is up */
     a->shortcut_until = 0;
     return 1;
@@ -4021,7 +4087,8 @@ static int shortcut_pitch(App *a, int is_x)
 
 static void handle_key(App *a, SDL_Keycode k)
 {
-    if (shortcut_pitch(a, k == SDLK_c)) return;
+    if (shortcut_face_button(a, k == SDLK_c ? RGFACE_X
+                             : k == SDLK_x ? RGFACE_B : -1)) return;
     if (punch_enabled(a)) {
         int eff = punch_for_key(k);
         if (eff >= 0) { punch_press(a, eff); return; }
@@ -4097,7 +4164,9 @@ static void handle_gc_button(App *a, int button, int down)
         }
     }
 
-    if (down && shortcut_pitch(a, button == SDL_CONTROLLER_BUTTON_X)) return;
+    if (down && shortcut_face_button(a,
+            button == SDL_CONTROLLER_BUTTON_X ? RGFACE_X :
+            button == SDL_CONTROLLER_BUTTON_B ? RGFACE_B : -1)) return;
 
     if (down) {
         switch (button) {
@@ -4152,7 +4221,8 @@ static void handle_joy_button(App *a, int button, int down)
             return;
         }
     }
-    if (down && shortcut_pitch(a, button == 2)) return;   /* L1 + X */
+    if (down && shortcut_face_button(a, button == 2 ? RGFACE_X :
+            button == 1 ? RGFACE_B : -1)) return;   /* L1 + X / L1 + B */
     if (!down) {
         if (button == 0) edit_a_up(a);
         return;
@@ -4578,6 +4648,175 @@ static int test_pitch_run(App *a)
 #undef CHECK
 }
 
+/* Headless slice checks (`--test-trim`). */
+static int test_trim_run(App *a)
+{
+    int fails = 0;
+    SDL_Init(SDL_INIT_TIMER);
+
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    /* Percentage -> frame mapping. */
+    int start = -1, count = -1;
+    engine_slice(1000, 0, 10000, &start, &count);
+    CHECK(start == 0 && count == 1000, "a default step plays the whole sample");
+    engine_slice(1000, 564, 9874, &start, &count);
+    CHECK(start == 56 && count == 931, "the percentages map to frames");
+    engine_slice(1000, 9000, 9000, &start, &count);
+    CHECK(start == 900 && count == 1, "an empty range keeps one frame");
+    engine_slice(1000, 20000, -5, &start, &count);
+    CHECK(start == 999 && count == 1, "out-of-range values are clamped");
+
+    /* Playback: the sample is +0.5 for the first half, -0.5 for the second,
+     * so the slice's start is audible as a polarity flip. */
+    static float halves[44100];
+    for (int i = 0; i < 44100; i++) halves[i] = i < 22050 ? 0.5f : -0.5f;
+    float buf[2048 * 2];
+    Engine e;
+    engine_init(&e, 44100);
+    e.bpm_x100 = 12000;
+    for (int t = 0; t < N_TRACKS; t++) {
+        e.sample_data[t] = halves;
+        e.sample_len[t] = 44100;
+        e.lvl[t][0] = LVL_OFF;
+    }
+    e.trim_s[0][0] = 0; e.trim_e[0][0] = 10000;
+    e.lvl[0][0] = LVL_ON;
+    e.playing = 1;
+    engine_restart(&e);
+    engine_mix(&e, buf, 1024);
+    CHECK(buf[2 * 300] > 0.1f, "an untrimmed step starts at the sample head");
+
+    e.playing = 0;
+    for (int i = 0; i < MAX_VOICES; i++) { e.voices[i].data = NULL; e.voices[i].delay = 0; }
+    e.trim_s[0][0] = 5000; e.trim_e[0][0] = 10000;
+    engine_restart(&e);
+    e.playing = 1;
+    engine_mix(&e, buf, 1024);
+    CHECK(buf[2 * 300] < -0.1f, "a trimmed start jumps into the sample");
+
+    /* A cut end stops the voice and fades it out instead of clicking. */
+    e.playing = 0;
+    for (int i = 0; i < MAX_VOICES; i++) { e.voices[i].data = NULL; e.voices[i].delay = 0; }
+    e.trim_s[0][0] = 0; e.trim_e[0][0] = 5000;   /* half the sample */
+    engine_restart(&e);
+    e.playing = 1;
+    int last = -1;
+    float last_abs = 0.0f;
+    for (int n = 0; n < 24; n++) {
+        engine_mix(&e, buf, 1024);
+        for (int i = 0; i < 2048; i++)
+            if (buf[i] != 0.0f) { last = n * 1024 + i / 2; last_abs = buf[i] < 0 ? -buf[i] : buf[i]; }
+    }
+    CHECK(last > 0 && last < 44100 / 2 + 2048, "a trimmed end stops the voice early");
+    CHECK(last_abs < 0.05f, "the trimmed end fades out instead of clicking");
+    e.playing = 0;
+
+    /* Persistence: TRM lines round-trip, clamp, and stay absent when default. */
+    char path[1200];
+    snprintf(path, sizeof path, "%s/trim-test.txt", a->lib.conf_dir);
+    Engine *w = &a->eng;
+    for (int t = 0; t < N_TRACKS; t++)
+        for (int s = 0; s < N_STEPS; s++) {
+            w->trim_s[t][s] = 0;
+            w->trim_e[t][s] = 10000;
+        }
+    w->trim_s[2][3] = 564;
+    w->trim_e[2][3] = 9874;
+    w->trim_s[5][0] = 2500;
+    w->trim_e[5][0] = 7500;
+    CHECK(pattern_save_file(w, path) == 0, "a sliced pattern saves");
+    Engine r;
+    engine_init(&r, 44100);
+    CHECK(pattern_load_file(&r, path) == 0, "a sliced pattern loads");
+    CHECK(r.trim_s[2][3] == 564 && r.trim_e[2][3] == 9874,
+          "the slice round-trips with two-place precision");
+    CHECK(r.trim_s[5][0] == 2500 && r.trim_e[5][0] == 7500,
+          "a second track keeps its own slice");
+    CHECK(r.trim_s[0][0] == 0 && r.trim_e[0][0] == 10000,
+          "untouched steps stay at the full sample");
+
+    FILE *f = fopen(path, "r");
+    if (f) {
+        char line[512];
+        int trm = 0;
+        while (fgets(line, sizeof line, f)) {
+            if (!strncmp(line, "TRM ", 4)) trm++;
+        }
+        fclose(f);
+        CHECK(trm > 0 && trm < N_TRACKS, "TRM lines are written for cut tracks only");
+    } else {
+        CHECK(0, "the sliced pattern reopens");
+    }
+
+    f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "%s\nBPM 120.00\nTRM %s -50 99999 5000 10000\n",
+                machine_pattern_magic(), TRACKS[0].label);
+        fclose(f);
+        Engine q;
+        engine_init(&q, 44100);
+        if (pattern_load_file(&q, path) == 0) {
+            CHECK(q.trim_s[0][0] == 0 && q.trim_e[0][0] == 10000,
+                  "an out-of-range slice clamps");
+            CHECK(q.trim_s[0][2] == 5000 && q.trim_e[0][2] == 10000,
+                  "a partial TRM line fills what it carries");
+        } else {
+            CHECK(0, "a partial TRM line loads");
+        }
+        engine_free(&q);
+    }
+    remove(path);
+    engine_free(&r);
+    engine_free(&e);
+
+    /* Page: cursor wraps inside the pattern, values stay ordered. */
+    a->cur_track = 4;
+    a->eng.length = 8;
+    for (int s = 0; s < N_STEPS; s++) {
+        a->eng.trim_s[4][s] = 0;
+        a->eng.trim_e[4][s] = 10000;
+    }
+    rg_slice_ui_open(&a->slice, 7);
+    ViewCtx v = view_ctx(a);
+    v.track = 4;
+    CHECK(rg_slice_page_action(&v, &a->slice, RGV_RIGHT) == 1 && a->slice.step == 0,
+          "the step cursor wraps inside the pattern length");
+    CHECK(rg_slice_page_action(&v, &a->slice, RGV_OK) == 1 && a->slice.handle == 1,
+          "A swaps START/END");
+    for (int i = 0; i < 3; i++) rg_slice_page_action(&v, &a->slice, RGV_UP);
+    CHECK(a->eng.trim_e[4][0] == 10000, "END stops at 100 %");
+    CHECK(rg_slice_page_action(&v, &a->slice, RGV_UP) == 0,
+          "a clamped value reports no change");
+
+    a->eng.trim_s[4][0] = 9900;
+    for (int i = 0; i < 30; i++) rg_slice_page_action(&v, &a->slice, RGV_DOWN);
+    CHECK(a->eng.trim_e[4][0] == 9901, "END cannot cross START");
+
+    a->slice.handle = 0;
+    a->eng.trim_s[4][0] = 0;
+    for (int i = 0; i < 40; i++) rg_slice_page_action(&v, &a->slice, RGV_UP);
+    CHECK(a->eng.trim_s[4][0] == 9900, "START cannot cross END");
+
+    /* Held keys accelerate: the same action repeated moves further. */
+    a->eng.trim_s[4][0] = 0;
+    a->eng.trim_e[4][0] = 10000;
+    a->slice.handle = 0;
+    a->slice.repeat = 0;
+    rg_slice_page_action(&v, &a->slice, RGV_UP);
+    int first_step = a->eng.trim_s[4][0];
+    for (int i = 0; i < 6; i++) rg_slice_page_action(&v, &a->slice, RGV_UP);
+    int later = a->eng.trim_s[4][0] - first_step;
+    CHECK(first_step == 1 && later > 10, "a held key accelerates");
+
+    SDL_Quit();
+    return fails ? 1 : 0;
+#undef CHECK
+}
+
 /* ---------------------------------------------------------------- bounce */
 
 
@@ -4653,6 +4892,7 @@ int main(int argc, char **argv)
     int test_swing = 0;
     int test_levels = 0;
     int test_pitch = 0;
+    int test_trim = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -4677,11 +4917,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--test-swing")) test_swing = 1;
         else if (!strcmp(argv[i], "--test-levels")) test_levels = 1;
         else if (!strcmp(argv[i], "--test-pitch")) test_pitch = 1;
+        else if (!strcmp(argv[i], "--test-trim")) test_trim = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
-                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-sampler] [--test-pattern] [--test-swing] [--test-levels] [--test-pitch]"
-                   " [--screenshot out.bmp [--mode edit|mute|punch|sampler|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|exportconfirm|pitch|vol|l1|l2|r1|r2]]\n");
+                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-sampler] [--test-pattern] [--test-swing] [--test-levels] [--test-pitch] [--test-trim]"
+                   " [--screenshot out.bmp [--mode edit|mute|punch|sampler|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|exportconfirm|pitch|slice|vol|l1|l2|r1|r2]]\n");
             return 0;
         }
     }
@@ -4719,10 +4960,10 @@ int main(int argc, char **argv)
         return fails ? 1 : 0;
     }
 
-    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch || test_sampler || test_pattern || test_levels || test_pitch) {
+    if (bounce || save_slot_set || song_bounce || test_song || test_length || test_fx || test_mute || test_punch || test_sampler || test_pattern || test_levels || test_pitch || test_trim) {
         resolve_conf(&a, base ? base : ".");
         if (!test_song && !test_length && !test_fx && !test_mute &&
-            !test_punch && !test_sampler && !test_pitch)
+            !test_punch && !test_sampler && !test_pitch && !test_trim)
             install_default_pattern(&a);
         load_fx_settings(&a);
         if (pattern_arg >= 1 && pattern_arg <= PAT_MAX_SLOTS)
@@ -4738,6 +4979,7 @@ int main(int argc, char **argv)
         if (test_pattern) return test_pattern_run(&a);
         if (test_levels) return test_levels_run(&a);
         if (test_pitch) return test_pitch_run(&a);
+        if (test_trim) return test_trim_run(&a);
 
         if (save_slot_set) {
             engine_free(&a.eng);
@@ -4876,6 +5118,13 @@ int main(int argc, char **argv)
                 a.mode = MODE_PITCH;
                 a.cur_track = 2;
                 a.eng.pitch[2] = 7;
+            }
+            else if (!strcmp(mode_arg, "slice")) {
+                a.cur_track = 2;
+                a.cur_step = 3;
+                open_slice_page(&a);
+                a.eng.trim_s[2][3] = 564;
+                a.eng.trim_e[2][3] = 9874;
             }
             else if (!strcmp(mode_arg, "vol")) {
                 a.mode = MODE_VOL;
