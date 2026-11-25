@@ -3,8 +3,8 @@
   - shipped: phase-vocoder transpose rendered offline and cached by (sample, semitones), `PIT` pattern lines (per song bar), shared L1+X page - see PLAN.md P2
 - [x] muted instruments must remain muted in exported WAV too
   - shipped: the export engine inherits the live mute state; the export confirmation page lists the muted tracks and Y includes them on request - see PLAN.md P1
-- [ ] step-programmable sample length with start/end points (in two-place decimal percentages, e.g. start point: 5.64%, end point: 98.74%) (shortcut: L1 + B)
-  - planned: per sequencer step (16 slices per track), 0.01 % resolution - see PLAN.md P3
+- [x] step-programmable sample length with start/end points (in two-place decimal percentages, e.g. start point: 5.64%, end point: 98.74%) (shortcut: L1 + B)
+  - shipped: per-step `TRM` lines in 0.01 % units, voices play the slice with a 2 ms fade at each cut edge, shared slice page with a waveform strip and accelerating value keys - see PLAN.md P3
 - [ ] MIDI sync support via USB-OTG 
   - only MIDI start/stop and tempo sync required
   - only MIDI IN required

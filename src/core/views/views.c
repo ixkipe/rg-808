@@ -56,7 +56,7 @@ const char *rg_shortcut_face_label(int sh, int face)
 {
     if (sh == RGSH_L1) {
         if (face == RGFACE_X) return "PITCH";
-        /* P3 adds B ("TRIM") in the same cluster. */
+        if (face == RGFACE_B) return "TRIM";
     } else if (sh == RGSH_R1) {
         if (face == RGFACE_A) return "REWIND";
         if (face == RGFACE_B) return "GATE";
