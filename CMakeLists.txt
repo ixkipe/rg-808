@@ -21,6 +21,7 @@ set(CORE_SOURCES
     src/core/step_ui.c
     src/core/views/views.c
     src/core/views/pitch_view.c
+    src/core/views/slice_view.c
 )
 
 if (RG_MACHINE STREQUAL "808")

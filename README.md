@@ -1,4 +1,4 @@
-# RG-808 — a Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster)
+# RG-808 â€” a Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster)
 
 ![Sequencer](screenshots/sequencer.png)
 
@@ -6,14 +6,14 @@
 
 ![FX](screenshots/fx.png)
 
-**Version 1.0** — first stable release (2026-11-15). RG-808 and RG-SMP both
+**Version 1.0** â€” first stable release (2026-11-15). RG-808 and RG-SMP both
 ship as 1.0, validated on a physical RG35XX SP.
 
-A 1–16-step, 11-track drum machine written in C with SDL2, packaged as a
+A 1â€“16-step, 11-track drum machine written in C with SDL2, packaged as a
 PortMaster "ready-to-run" port. Per-step accents, sample-accurate sequencing,
 a 200-slot pattern library, song chains with WAV export, a per-pattern master
 effects chain (selectable drive, selectable modulation, tempo-synced delay,
-reverb), per-track performance mute, held R1 punch-in FX, 640×480 native UI,
+reverb), per-track performance mute, held R1 punch-in FX, 640Ã—480 native UI,
 D-pad driven.
 
 > **Disclaimer: this project was made with AI.** All of the source code, build
@@ -54,6 +54,7 @@ rg808.exe --test-length                 # headless pattern-length checks
 rg808.exe --test-fx                     # headless effects checks
 rg808.exe --test-mute                   # headless performance-mute checks
 rg808.exe --test-pitch                  # headless transpose DSP / cache / PIT checks
+rg808.exe --test-trim                   # headless slice math / TRM checks
 rg808.exe --test-punch                  # headless punch-in FX checks
 rg808.exe --screenshot shot.bmp         # render one UI frame to BMP
 rg808.exe --screenshot p.bmp --mode pattern   # pattern browser frame
@@ -84,13 +85,13 @@ machine: the `master` branch builds the drum machine by default, and the
 `core` / `sampler` branches build the sampler.
 
 ## Installing on the device
-Option A — over SSH (enable SSH on muOS first):
+Option A â€” over SSH (enable SSH on muOS first):
 ```
 powershell tools\deploy.ps1 <device-ip>
 ```
-Option B — offline: put `dist/rg808.zip` on the SD card, or unzip it so that
+Option B â€” offline: put `dist/rg808.zip` on the SD card, or unzip it so that
 the `rg808/` folder lands in `<card>/ports/` and `RG808.sh` in
-`<card>/roms/PORTS/`. Launch "RG808" from Explore Content → Ports.
+`<card>/roms/PORTS/`. Launch "RG808" from Explore Content â†’ Ports.
 
 Before the first build, please run the device probe so we can pin the facts
 (kernel, glibc, SDL2, paths):
@@ -102,13 +103,13 @@ tools\device\probe.sh > probe.txt 2>&1     # in Mustard Terminal
 | Button | Action |
 |--|--|
 | D-Pad | Move cursor (hold to repeat) |
-| A | Cycle step: off → on → accent |
+| A | Cycle step: off â†’ on â†’ accent |
 | B | Clear step (back in menus) |
 | X | Hear sound of the selected track |
 | Y | Mute / unmute the selected track in the sequencer |
 | START | Play / stop |
 | SELECT | Menu (tempo, swing, pattern length, ratchets, kits, effects, save, pattern library, song mode, clear all, quit) |
-| L1 / L2 / R2 | Shoulder shortcuts — hold one and an on-screen hint appears |
+| L1 / L2 / R2 | Shoulder shortcuts â€” hold one and an on-screen hint appears |
 | R1 + D-Pad / A B X Y | Held punch-in effects (one at a time, quantized to the next 16th) |
 
 **Shoulder shortcuts**: hold a shoulder button and the UI shows a D-pad-shaped
@@ -121,6 +122,7 @@ cheat sheet for that button. The assigned combinations are:
 | L1 + Up | Pattern length |
 | L1 + Down | Ratchet notes |
 | L1 + X | Pitch / transpose the selected track |
+| L1 + B | Sample start/end (slice) for the selected step |
 | L2 + Left | Pattern library |
 | L2 + Right | Song mode |
 | L2 + Up | Sample/kit selection |
@@ -144,6 +146,15 @@ with the pattern (`PIT` lines), so every song bar can transpose on its own, and
 the track row shows it next to the label (`+7`). Rendering a long sample takes
 a moment; the transport keeps running while it happens.
 
+**Slice**: L1 + B opens the sample start/end page for the selected step. Each of
+the 16 steps can play its own slice of the track's sample, in hundredths of a
+percent (`START 5.64`, `END 98.74`). Left/right picks the step, up/down nudges
+the highlighted value (0.01 % per tap, coarser while held), A swaps START and
+END, X auditions the slice, B returns. The waveform shows the whole sample with
+the slice lit and both edges marked, and the row of step cells shows which
+steps are cut. Slices are stored with the pattern (`TRM` lines), and the
+sequencer plays the cut with a 2 ms fade at each edge so it never clicks.
+
 **Mute**: in the sequencer, Y toggles a performance mute for the selected
 instrument; X still auditions it. Muted rows are tinted and marked with a red
 `M`. Mutes apply to live playback and song playback, cut any ringing hit
@@ -162,31 +173,31 @@ boundary, only one effect can be active at a time, and releasing the button
 crossfades back to live audio. Punch-ins work during pattern and song playback
 and are not saved or included in WAV export.
 
-**Swing**: menu → EDIT SWING; 0–100 % shuffles every even 16th late
-(~67 % ≈ triplet feel). **Pattern length**: menu → PATTERN LENGTH (or L1 + Up)
-sets how many of the 16 steps play, from 1 to 16 (up/down ±1, left/right ±4).
+**Swing**: menu â†’ EDIT SWING; 0â€“100 % shuffles every even 16th late
+(~67 % â‰ˆ triplet feel). **Pattern length**: menu â†’ PATTERN LENGTH (or L1 + Up)
+sets how many of the 16 steps play, from 1 to 16 (up/down Â±1, left/right Â±4).
 Steps past the end stay visible but dimmed, so shortening and re-expanding a
 pattern never destroys hidden notes; the cursor wraps at the last played step.
-**Ratchets**: menu → RATCHET NOTES turns the grid into
-a roll editor — A cycles each step through 2× / 3× / 4× rolls and flam
-(digit drawn in the cell); in kit mode (menu → SELECT KITS) D-Pad rows =
+**Ratchets**: menu â†’ RATCHET NOTES turns the grid into
+a roll editor â€” A cycles each step through 2Ã— / 3Ã— / 4Ã— rolls and flam
+(digit drawn in the cell); in kit mode (menu â†’ SELECT KITS) D-Pad rows =
 instruments, columns = sample variants (numbered boxes); A selects +
 auditions, X auditions only, B returns. Each voice ships every matching
 variant from the pack (BD/SN: 16, toms: 7, CH: 5, OH: 3, CL: 2, CP: 3, CB: 2,
 CY: 6). All selections are saved with the pattern.
 
-**Effects**: menu → EFFECTS edits the active pattern's master chain:
-drive → modulation → delay → reverb. The drive slot is selectable as
-bitcrusher (4–16 bits, 1–32× sample-and-hold), overdrive (drive/mix) or
+**Effects**: menu â†’ EFFECTS edits the active pattern's master chain:
+drive â†’ modulation â†’ delay â†’ reverb. The drive slot is selectable as
+bitcrusher (4â€“16 bits, 1â€“32Ã— sample-and-hold), overdrive (drive/mix) or
 compression (threshold/ratio/makeup); the modulation slot is selectable as
-flanger or phaser (rate/depth/feedback/mix). The delay runs 20–4000 ms or
+flanger or phaser (rate/depth/feedback/mix). The delay runs 20â€“4000 ms or
 tempo-syncs to 1/4, 1/8, 1/16, 1/4T, 1/8T, 1/16T, 4D, 8D or 16D, following the
 live tempo or the current song bar. Up/down selects a row, left/right adjusts,
 and A toggles the master bypass, a stage or SYNC. Effects are stored with each
 pattern and autosave with it; `conf/fx.txt` is the fallback for older patterns
 without FX lines. Master bypass is bit-identical to the dry render.
 
-**Pattern library**: menu → PATTERN LIBRARY opens 200 numbered slots.
+**Pattern library**: menu â†’ PATTERN LIBRARY opens 200 numbered slots.
 D-Pad up/down moves, left/right pages by 12, A loads the selected
 slot, B returns. SELECT opens the slot actions: LOAD SLOT, SAVE HERE
 (overwrite with the current editor), COPY ACTIVE HERE, RENAME (letter picker:
@@ -195,7 +206,7 @@ SELECT saves), DELETE and CANCEL. The active slot number and name are shown
 in the header; edits autosave into that slot. A legacy `conf/pattern.txt`
 from v1 is imported into slot 001 on first run.
 
-**Song mode**: menu → SONG MODE (or L2+Right) chains up to 512 bars, one
+**Song mode**: menu â†’ SONG MODE (or L2+Right) chains up to 512 bars, one
 pattern slot per bar. A picks the pattern for the selected bar (the pattern
 browser opens in pick mode), D-Pad up/down selects, left/right pages by 12,
 X jumps the cursor to the bar currently playing, and START plays/stops the
@@ -214,7 +225,8 @@ Your pattern and tempo are saved automatically on quit (menu: QUIT) and can be
 saved/loaded manually. Patterns live in `conf/patterns/NNN.txt`, with slot
 names and the active slot in `conf/patterns/index.txt`; the song chain lives
 in `conf/song.txt` inside the port folder on the card. Pattern files include
-their FX chain and one `PIT <track> <semitones>` line per transposed track;
+their FX chain, one `PIT <track> <semitones>` line per transposed track and one
+`TRM <track> <16 start> <16 end>` line per sliced track (0.01 % units);
 `conf/fx.txt` supplies the fallback chain for older patterns without FX lines.
 Writes go to a temp file, are flushed, then renamed into place, so an
 interrupted save never truncates a pattern or song.
@@ -226,7 +238,7 @@ Each voice ships its whole variant family from the pack as `<id>NN.wav`
 the `dflt` column in `src/engine.c`.
 
 ## Status / roadmap
-- **Version 1.0** (2026-11-15): first stable release. M1–M11 are implemented;
+- **Version 1.0** (2026-11-15): first stable release. M1â€“M11 are implemented;
   both ARM cross-builds pass the automated suites; controls, audio, effects,
   punch-in FX and song export were validated on a physical RG35XX SP. RG-SMP
   ships as 1.0 from the `sampler` branch.
@@ -234,7 +246,7 @@ the `dflt` column in `src/engine.c`.
   (kit mode), save.
 - v2 (shipped in 1.0): swing + ratchets (M6), 200-slot pattern library with
   rename/copy/delete and legacy import (M7), shoulder shortcut layer, song
-  chains with streaming WAV export (M8), per-pattern length 1–16, and master
+  chains with streaming WAV export (M8), per-pattern length 1â€“16, and master
   effects (M9: selectable bitcrusher/overdrive/compression, flanger/phaser,
   tempo-synced delay, reverb) with per-pattern settings (M9.5), per-track
   performance mute (Y in the sequencer), and R1 punch-in FX (M11).
