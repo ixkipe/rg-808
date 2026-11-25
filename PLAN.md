@@ -375,12 +375,27 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
     on the 808 the real kit resolution path.
   - [x] Verified in the bounce: a transposed pattern differs from the same
     pattern without the interval while the render length is unchanged.
-- [ ] **P3 — Programmable sample start/end** (L1+B)
-  - [ ] Core: voices gain start/end frame offsets; `TRM` pattern lines with
-    0.01 % resolution, per sequencer step.
-  - [ ] L1+B slice page: waveform strip, 16 step cells, two-place decimals,
-    per-step audition.
-  - [ ] `--test-trim`: slice boundaries, round-trip, bounce difference.
+- [x] **P3 — Programmable sample start/end** (L1+B)
+  - [x] Core: voices carry a slice (`start`, `slice`, two fade frames); `TRM
+    <label> <16 start> <16 end>` pattern lines in 0.01 % units, written only
+    for cut tracks. A cut edge gets a 2 ms fade so an arbitrary point does not
+    click, and the step mapping always yields at least one frame.
+  - [x] The slice page (L1+B, `src/core/views/slice_view.c`): waveform strip
+    with the slice highlighted, 16 step cells showing each step's cut, START
+    and END in two-place percentages, frame count and duration. Left/right
+    picks the step, up/down nudges the selected value (0.01 % per tap,
+    accelerating while held), A swaps START/END, X auditions, B returns.
+  - [x] The waveform envelope is cached (480 columns) and only rebuilt when the
+    sample changes, so drawing the page costs nothing per frame.
+  - [x] Auditioning follows the feature: the sequencer's A/X play the step's
+    slice, and the slice page plays what is being edited.
+  - [x] `--test-trim` / `tools/test-trim.ps1`: percentage mapping, clamping and
+    the one-frame floor, slice playback (head vs cut start), the cut end
+    stopping early and fading out, TRM round-trip and partial lines, the page's
+    cursor wrap, handle swap, clamping and acceleration, plus a bounce that
+    differs while keeping its length.
+  - [x] L1+B appears in the shared shoulder hint as `B: TRIM`, next to
+    `X: PITCH`.
 - [ ] **P4 — MIDI engine**
   - [ ] Core: `src/core/midi.c` — running-status parser, clock → BPM lock,
     start/stop/continue, song position.

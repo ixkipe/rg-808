@@ -65,6 +65,8 @@ typedef struct PatternSnapshot {
     FxSettings fx;             /* per-pattern effects chain */
     unsigned char lvl[N_TRACKS][N_STEPS];
     unsigned char rch[N_TRACKS][N_STEPS];
+    unsigned short trim_s[N_TRACKS][N_STEPS];   /* slice start, 0.01 % */
+    unsigned short trim_e[N_TRACKS][N_STEPS];   /* slice end, 0.01 % */
     int kit[N_TRACKS];               /* 808 variant index; unused by the SMP */
     int pitch[N_TRACKS];             /* semitones, -24..24 (duration preserved) */
     char sample_path[N_TRACKS][SAMPLE_PATH_MAX];
@@ -81,11 +83,15 @@ typedef struct SongSet {
 
 typedef struct Voice {
     const float *data;   /* mono sample, owned by sample table */
-    int len;
-    int pos;             /* frame index into data */
+    int len;             /* frames in data */
+    int start;           /* first frame of the step's slice */
+    int slice;           /* frames in the slice (end - start) */
+    int pos;             /* frame index inside the slice */
     int delay;           /* frames to wait before starting (sample-accurate triggers) */
     float gain;
     int track;
+    int fade_in;         /* frames of fade-in at a cut start (0 = none) */
+    int fade_out;        /* frames of fade-out at a cut end (0 = none) */
 } Voice;
 
 struct PerfFxState;
@@ -98,6 +104,8 @@ typedef struct Engine {
     volatile int length;                   /* 1..N_STEPS: live pattern length */
     volatile unsigned char lvl[N_TRACKS][N_STEPS];
     volatile unsigned char rch[N_TRACKS][N_STEPS];  /* per-step ratchet mode (RCH_*) */
+    volatile unsigned short trim_s[N_TRACKS][N_STEPS];  /* slice start, 0.01 % */
+    volatile unsigned short trim_e[N_TRACKS][N_STEPS];  /* slice end, 0.01 % */
     volatile int kit[N_TRACKS];            /* 808 selected variant (unused by SMP) */
     volatile int pitch[N_TRACKS];          /* semitones -24..24, applied when the
                                               sample is resolved (UI thread) */
@@ -110,6 +118,8 @@ typedef struct Engine {
     volatile int preview_len;
     volatile int preview_rch;              /* ratchet mode to audition */
     volatile int preview_lvl;              /* level (gain) to audition */
+    volatile int preview_trim_s;           /* slice to audition, 0.01 % */
+    volatile int preview_trim_e;
     volatile int restart;                  /* set by UI on play to reset the step counter */
     volatile int kill_all_voices;          /* consumed by audio: cut every voice */
 
@@ -157,6 +167,17 @@ void engine_fire_step(Engine *e, int step);       /* fire all notes at this step
 void engine_preview(Engine *e, int track, int variant, int rch, int lvl); /* audition track sample (X) */
 void engine_preview_data(Engine *e, int track, const float *data, int len,
                          int rch, int lvl);       /* audition an arbitrary sample */
+/* Audition a track with the slice of `step` (live pattern), so programming a
+ * cut is heard the way it will play. */
+void engine_preview_at(Engine *e, int track, int variant, int rch, int lvl, int step);
+/* Audition an explicit slice of an arbitrary buffer. */
+void engine_preview_slice(Engine *e, int track, const float *data, int len,
+                          int rch, int lvl, int trim_s, int trim_e);
+
+/* Map a step's start/end percentages (0.01 % units) onto frames. Always
+ * yields at least one frame; the pair is clamped and ordered. */
+void engine_slice(int sample_len, int trim_s, int trim_e,
+                  int *start, int *count);
 void engine_select_kit(Engine *e, int track, int variant); /* 808: set + resolve variant */
 void engine_kill_all_voices(Engine *e);           /* cut all voices at the next callback */
 void engine_restart(Engine *e);                   /* restart clock from step 0 / start bar */
