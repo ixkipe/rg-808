@@ -320,9 +320,11 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
   mute state; the confirmation page names the excluded tracks and can include
   them on request.
 - **MIDI ships engine-first.** The parser, tempo lock, transport and external
-  clock land with a synthetic-stream test. Device input is gated on the
-  RG35XX acting as a **USB host** with a USB-MIDI driver, which is probed
-  before that work starts.
+  clock land with a synthetic-stream test, independent of the transport.
+  Device input needs two things: the RG35XX acting as a **USB host** (proven
+  2026-11-25) and a kernel with a USB-MIDI driver (missing today - the probe
+  finds no rawmidi node). The chosen cable is USB-C <-> USB-C to a Roland
+  S-1 / T-8; see P5.
 
 ### Phases
 
@@ -406,12 +408,40 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
   - [ ] Engine external-clock mode: the master supplies tempo and transport,
     **our** pattern length and song chain stay ours.
   - [ ] `--test-midi` drives a synthetic clock stream (no hardware needed).
-- [ ] **P5 ΓÇö MIDI device input**
-  - [ ] Reader thread on `/dev/snd/midiC*D0`, MIDI SYNC page, clock badge.
-  - [ ] Only after the device probe proves USB host mode works; otherwise the
-    feature is documented as device-blocked rather than half-finished.
-  - [ ] Roland T-8 / S-1 bring-up over MIDI Type A (3.5 mm) or the DIN chain.
-- [ ] **P6 ΓÇö Release 1.1**
+- [ ] **P5 - MIDI device input** *(blocked on the device kernel - see below)*
+  - [x] **Device probe (2026-11-25, RG35XX SP / muOS)**: the Type-C port
+    **can be a USB host**. Plugging a device makes muOS load the host driver
+    (`insmod_host_driver`), register the `sunxi-ehci` / `sunxi-ohci` buses and
+    enumerate it (seen: a USB audio DAC, full speed, bus 8). Unplugging tears
+    the host stack down again, so the role switch is automatic and the
+    launcher needs no preparation.
+  - [ ] **Chosen chain**: Roland S-1 / T-8 **USB-C <-> USB-C** to the
+    Anbernic - the Roland as a class-compliant USB MIDI device, the Anbernic
+    as host. One cable, no adapter, no MIDI Type A pinout to get wrong.
+    (The USB-C -> 3.5 mm Type-A idea is dropped: the adapter probed is an
+    AB13X **USB audio DAC**, not a MIDI interface, so it can never carry
+    MIDI.)
+  - [ ] **Blocker found while probing**: the kernel has no USB audio/MIDI
+    class driver. The AB13X enumerates and binds HID, but no ALSA card
+    appears - `/proc/asound/cards` keeps its three built-in cards and
+    `/dev/snd/` gains no `midiC*`. There is therefore no rawmidi node to
+    read, whatever the cable. This is a kernel capability
+    (`CONFIG_SND_USB_AUDIO`), not an app or cabling problem.
+  - [ ] **Decision**: keep the MIDI engine independent of the transport (P4)
+    and prove it on the PC with a synthetic stream; wire the device reader
+    only against a kernel that exposes a rawmidi node. Re-check after a muOS
+    update with `ls /sys/module | grep -i snd` and
+    `zcat /proc/config.gz | grep SND_USB`, or with a USB-C <-> USB-C **data**
+    cable on a build that has the driver (the user has charging-only cables
+    for now).
+  - [ ] **Fallback if the kernel never gains it**: `f_midi` gadget through
+    configfs - the RG35XX appears as a USB MIDI *device* and a PC bridges
+    the Roland. Same app-side code, because the gadget also creates a local
+    rawmidi node.
+  - [ ] Reader thread on `/dev/snd/midiC*D0` - rescan on plug, since the host
+    stack is rebuilt and card/node numbers change - MIDI SYNC page, clock
+    badge.
+- [ ] **P6 - Release 1.1**
   - [ ] Docs (README / CORE / PLAN / SAMPLER), `port.json`, screenshots, both
     machine packages, device smoke test.
 

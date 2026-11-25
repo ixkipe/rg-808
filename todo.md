@@ -12,4 +12,9 @@
   - must be able to sync a single pattern as well as a looped song
   - Anbernic RG35XX devices have a USB Type-C OTG port
   - is it possible to, instead of the USB-OTG to USB to MIDI 5-din chain, implement MIDI Type A with USB-C to Jack 3.5 adapter, test with Roland S-1 or T-8 which also supports MIDI Type A, connect Anbernic to Roland via Jack 3.5 - 3.5 cable?
-  - answer: yes for the cable - the Roland T-8 speaks MIDI Type A on its 3.5 mm TRS jack (its manual lists BCC-1-3535 TRS/TRS and BMIDI-5-35 TRS/DIN cables), so an RG35XX acting as USB host can drive it through a "USB host to 3.5 mm Type-A MIDI" adapter. Both that route and the UM-ONE DIN chain need the same thing from the device: USB **host** mode plus a USB-MIDI driver. `tools/device/probe.sh` now checks for it - see PLAN.md P4/P5
+  - outcome (2026-11-25, RG35XX SP / muOS, `tools/device/probe.sh` + dmesg):
+    - the Anbernic **is** a USB host: plugging a device loads the sunxi EHCI/OHCI host stack and enumerates it; unplugging switches back, all automatic - see PLAN.md P5
+    - the 3.5 mm Type-A route is **dropped**: the USB-C -> 3.5 mm adapter tested is an AB13X **USB audio DAC**, not a MIDI interface, so a TRS MIDI cable into it can never carry MIDI (an audio adapter and a MIDI adapter look identical from outside - classify the part before buying)
+    - **blocker**: this kernel has no USB audio/MIDI class driver - the DAC enumerates but no ALSA card or `/dev/snd/midi*` appears, so there is no rawmidi node to read whatever the cable. That is `CONFIG_SND_USB_AUDIO`, i.e. a kernel capability, not app code
+  - chosen path: **Roland S-1 / T-8 USB-C <-> USB-C to the Anbernic** - the Roland as a class-compliant USB MIDI device, the Anbernic as host. One cable, no adapter, no Type A/B pinout to get wrong. Pending a kernel that exposes a rawmidi node (or a `f_midi` gadget fallback with a PC bridging the Roland), and a USB-C **data** cable (the tester has charging-only cables for now)
+  - the MIDI engine itself (parser, clock -> tempo lock, start/stop, external-clock mode) is transport-independent and can be built and proven on the PC - see PLAN.md P4
