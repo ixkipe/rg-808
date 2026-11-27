@@ -155,6 +155,21 @@ The sequencer has four audible step levels:
   sidecar carries the exact 0..4 values only for tracks that use ghost/weak.
   Older builds ignore `VLV` and play those steps as regular.
 
+## Slice page (P3, pattern-wide cuts)
+
+The slice page (L1+B) edits one **start/end pair per track**, in 0.01 % units -
+every step of the pattern plays that slice, so programming a cut is a single
+edit rather than one per step. Pitch stays per track (`PIT` lines) and is
+independent of the cut.
+
+- Pattern files carry `TRM <label> <start> <end>`; lines are written only for
+  tracks that actually cut their sample. The legacy per-step format
+  (`TRM <label> <16 starts> <16 ends>`) still loads and migrates to the first
+  pair that cut the sample.
+- On the page, left/right or A switch between START and END, up/down nudges
+  (0.01 % per tap, accelerating while held), X hears the track's slice and B
+  leaves. The waveform strip highlights the cut.
+
 ## Voice limits
 
 - **RG-808:** `track_voice_limit = 0`; voice allocation uses the global-oldest

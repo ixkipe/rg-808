@@ -65,8 +65,9 @@ typedef struct PatternSnapshot {
     FxSettings fx;             /* per-pattern effects chain */
     unsigned char lvl[N_TRACKS][N_STEPS];
     unsigned char rch[N_TRACKS][N_STEPS];
-    unsigned short trim_s[N_TRACKS][N_STEPS];   /* slice start, 0.01 % */
-    unsigned short trim_e[N_TRACKS][N_STEPS];   /* slice end, 0.01 % */
+    unsigned short trim_s[N_TRACKS];   /* slice start, 0.01 % (one cut per
+                                        track, played by every step) */
+    unsigned short trim_e[N_TRACKS];   /* slice end, 0.01 % */
     int kit[N_TRACKS];               /* 808 variant index; unused by the SMP */
     int pitch[N_TRACKS];             /* semitones, -24..24 (duration preserved) */
     char sample_path[N_TRACKS][SAMPLE_PATH_MAX];
@@ -104,8 +105,9 @@ typedef struct Engine {
     volatile int length;                   /* 1..N_STEPS: live pattern length */
     volatile unsigned char lvl[N_TRACKS][N_STEPS];
     volatile unsigned char rch[N_TRACKS][N_STEPS];  /* per-step ratchet mode (RCH_*) */
-    volatile unsigned short trim_s[N_TRACKS][N_STEPS];  /* slice start, 0.01 % */
-    volatile unsigned short trim_e[N_TRACKS][N_STEPS];  /* slice end, 0.01 % */
+    volatile unsigned short trim_s[N_TRACKS];  /* slice start, 0.01 % (one cut
+                                            per track, played by every step) */
+    volatile unsigned short trim_e[N_TRACKS];  /* slice end, 0.01 % */
     volatile int kit[N_TRACKS];            /* 808 selected variant (unused by SMP) */
     volatile int pitch[N_TRACKS];          /* semitones -24..24, applied when the
                                               sample is resolved (UI thread) */
@@ -175,9 +177,9 @@ void engine_fire_step(Engine *e, int step);       /* fire all notes at this step
 void engine_preview(Engine *e, int track, int variant, int rch, int lvl); /* audition track sample (X) */
 void engine_preview_data(Engine *e, int track, const float *data, int len,
                          int rch, int lvl);       /* audition an arbitrary sample */
-/* Audition a track with the slice of `step` (live pattern), so programming a
- * cut is heard the way it will play. */
-void engine_preview_at(Engine *e, int track, int variant, int rch, int lvl, int step);
+/* Audition a track with its slice, so programming a cut is heard the way it
+ * will play. The cut is a property of the track (every step plays it). */
+void engine_preview_track(Engine *e, int track, int variant, int rch, int lvl);
 /* Audition an explicit slice of an arbitrary buffer. */
 void engine_preview_slice(Engine *e, int track, const float *data, int len,
                           int rch, int lvl, int trim_s, int trim_e);

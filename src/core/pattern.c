@@ -322,8 +322,7 @@ void pattern_default_snapshot(PatternSnapshot *s)
     s->swing_pct = 0;
     s->length = N_STEPS;
     for (int t = 0; t < N_TRACKS; t++)
-        for (int st = 0; st < N_STEPS; st++)
-            s->trim_e[t][st] = 10000;      /* full sample until a step cuts it */
+        s->trim_e[t] = 10000;              /* full sample until a track cuts it */
     fx_get_fallback(&s->fx);
     machine_default_snapshot(s);
     s->slot = 0;
@@ -339,9 +338,9 @@ static void copy_snapshot_to_engine(Engine *e, const PatternSnapshot *s)
         for (int st = 0; st < N_STEPS; st++) {
             e->lvl[t][st] = s->lvl[t][st];
             e->rch[t][st] = s->rch[t][st];
-            e->trim_s[t][st] = s->trim_s[t][st];
-            e->trim_e[t][st] = s->trim_e[t][st];
         }
+        e->trim_s[t] = s->trim_s[t];
+        e->trim_e[t] = s->trim_e[t];
         e->kit[t] = s->kit[t];
         e->pitch[t] = pitch_clamp(s->pitch[t]);
         snprintf(e->sample_path[t], sizeof e->sample_path[t], "%s",
@@ -394,26 +393,40 @@ static int parse_pattern_stream(FILE *f, PatternSnapshot *s)
                     }
                 }
             } else if (!strncmp(line, "TRM ", 4)) {
-                /* TRM <label> <16 start> <16 end>, 0.01 % units */
+                /* TRM <label> <start> <end>, 0.01 % units - one cut per
+                 * track, played by every step.  Older patterns carried 16
+                 * starts + 16 ends; those migrate to the first pair that
+                 * actually cut the sample. */
                 if (sscanf(line + 4, "%4s", lab) == 1) {
                     for (int t = 0; t < N_TRACKS; t++) {
                         if (strcmp(lab, TRACKS[t].label)) continue;
                         char *p = strchr(line + 4, ' ');
-                        int n = 0;
+                        int v[N_STEPS * 2], n = 0;
                         while (p && *p && n < N_STEPS * 2) {
                             while (*p == ' ' || *p == '\t') p++;
                             if (!*p) break;
                             char *endp = NULL;
-                            long v = strtol(p, &endp, 10);
+                            long val = strtol(p, &endp, 10);
                             if (endp == p) break;
                             p = endp;
-                            if (v < 0) v = 0;
-                            if (v > 10000) v = 10000;
-                            if (n < N_STEPS)
-                                s->trim_s[t][n] = (unsigned short)v;
-                            else
-                                s->trim_e[t][n - N_STEPS] = (unsigned short)v;
-                            n++;
+                            if (val < 0) val = 0;
+                            if (val > 10000) val = 10000;
+                            v[n++] = (int)val;
+                        }
+                        if (n == N_STEPS * 2) {
+                            /* legacy per-step line: keep the first real cut */
+                            for (int k = 0; k < N_STEPS; k++) {
+                                if (v[k] != 0 || v[N_STEPS + k] != 10000) {
+                                    s->trim_s[t] = (unsigned short)v[k];
+                                    s->trim_e[t] = (unsigned short)v[N_STEPS + k];
+                                    break;
+                                }
+                            }
+                        } else if (n >= 2) {
+                            s->trim_s[t] = (unsigned short)v[0];
+                            s->trim_e[t] = (unsigned short)v[1];
+                        } else if (n == 1) {
+                            s->trim_s[t] = (unsigned short)v[0];
                         }
                         if (n > 0) got_any = 1;
                         break;
@@ -501,14 +514,9 @@ static int write_pattern_stream(FILE *f, Engine *e)
         fprintf(f, "\n");
     }
     for (int t = 0; t < N_TRACKS; t++) {
-        int need = 0;
-        for (int s = 0; s < N_STEPS; s++)
-            if (e->trim_s[t][s] != 0 || e->trim_e[t][s] != 10000) { need = 1; break; }
-        if (!need) continue;
-        fprintf(f, "TRM %s", TRACKS[t].label);
-        for (int s = 0; s < N_STEPS; s++) fprintf(f, " %u", (unsigned)e->trim_s[t][s]);
-        for (int s = 0; s < N_STEPS; s++) fprintf(f, " %u", (unsigned)e->trim_e[t][s]);
-        fprintf(f, "\n");
+        if (e->trim_s[t] == 0 && e->trim_e[t] == 10000) continue;
+        fprintf(f, "TRM %s %u %u\n", TRACKS[t].label,
+                (unsigned)e->trim_s[t], (unsigned)e->trim_e[t]);
     }
     for (int t = 0; t < N_TRACKS; t++) {
         fprintf(f, "RCH %s ", TRACKS[t].label);

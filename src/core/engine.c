@@ -79,11 +79,10 @@ void engine_init(Engine *e, int rate)
     e->step_prev = -1;
     e->bpm_x100 = 12000;
     e->length = N_STEPS;
-    for (int t = 0; t < N_TRACKS; t++)
-        for (int s = 0; s < N_STEPS; s++) {
-            e->trim_s[t][s] = 0;
-            e->trim_e[t][s] = 10000;
-        }
+    for (int t = 0; t < N_TRACKS; t++) {
+        e->trim_s[t] = 0;
+        e->trim_e[t] = 10000;
+    }
     e->next_step = 0;
     machine_init_engine(e);
 
@@ -226,17 +225,15 @@ void engine_preview(Engine *e, int track, int variant, int rch, int lvl)
     engine_preview_data(e, track, data, len, rch, lvl);
 }
 
-void engine_preview_at(Engine *e, int track, int variant, int rch, int lvl, int step)
+/* Audition a track with its slice (the cut is a property of the track and
+ * plays on every step), so programming a cut is heard the way it will play. */
+void engine_preview_track(Engine *e, int track, int variant, int rch, int lvl)
 {
     if (track < 0 || track >= N_TRACKS) return;
-    if (step < 0 || step >= N_STEPS) {
-        engine_preview(e, track, variant, rch, lvl);
-        return;
-    }
     int len = 0;
     const float *data = machine_sample_for(e, track, variant, &len);
     engine_preview_slice(e, track, data, len, rch, lvl,
-                         e->trim_s[track][step], e->trim_e[track][step]);
+                         e->trim_s[track], e->trim_e[track]);
 }
 
 /* 808 kit selection: store the variant and resolve it to a sample pointer.
@@ -356,7 +353,7 @@ void engine_fire_step(Engine *e, int step)
         if (lv > LVL_OFF && !e->mute[t])
             fire_sched(e, t, (const float *)e->sample_data[t], e->sample_len[t],
                        lvl_gain(lv), 0, e->rch[t][step], sps,
-                       e->trim_s[t][step], e->trim_e[t][step]);
+                       e->trim_s[t], e->trim_e[t]);
     }
 }
 
@@ -450,7 +447,7 @@ static int mix_song_steps(Engine *e, int frames, int want_punch)
             if (lv > LVL_OFF && !e->mute[t])
                 fire_sched(e, t, sp->sample[t], sp->sample_len[t], lvl_gain(lv),
                            delay, sp->rch[t][e->step], sps,
-                           sp->trim_s[t][e->step], sp->trim_e[t][e->step]);
+                           sp->trim_s[t], sp->trim_e[t]);
         }
         e->next_step += sps;
     }
@@ -511,7 +508,7 @@ static void ext_fire_live(Engine *e, int at)
         if (lv > LVL_OFF && !e->mute[t])
             fire_sched(e, t, (const float *)e->sample_data[t], e->sample_len[t],
                        lvl_gain(lv), delay, e->rch[t][e->step], sps,
-                       e->trim_s[t][e->step], e->trim_e[t][e->step]);
+                       e->trim_s[t], e->trim_e[t]);
     }
     e->next_step = (double)(e->total_pos + (unsigned long long)at) + sps;
     ((MidiClock *)e->midi)->pos++;
@@ -563,7 +560,7 @@ static void ext_fire_song(Engine *e, int at)
         if (lv > LVL_OFF && !e->mute[t])
             fire_sched(e, t, sp->sample[t], sp->sample_len[t], lvl_gain(lv),
                        delay, sp->rch[t][e->step], sps,
-                       sp->trim_s[t][e->step], sp->trim_e[t][e->step]);
+                       sp->trim_s[t], sp->trim_e[t]);
     }
     e->next_step = (double)(e->total_pos + (unsigned long long)at) + sps;
     ((MidiClock *)e->midi)->pos++;
@@ -962,7 +959,7 @@ void engine_mix(Engine *e, float *dst, int frames)
                     if (lv > LVL_OFF && !e->mute[t])
                         fire_sched(e, t, (const float *)e->sample_data[t], e->sample_len[t],
                                    lvl_gain(lv), at, e->rch[t][e->step], sps,
-                                   e->trim_s[t][e->step], e->trim_e[t][e->step]);
+                                   e->trim_s[t], e->trim_e[t]);
                 }
                 e->next_step += sps;
             }

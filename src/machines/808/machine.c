@@ -53,24 +53,11 @@ static void kit_pitch_init(void)
 /* Resolve one track, transposed when the pattern asks for it. */
 static void resolve_track(Engine *e, int t, int variant)
 {
-    char key[64];
-    snprintf(key, sizeof key, "%s:%d", TRACKS[t].id, variant);
-
     int len = 0;
-    const float *data = sample_get(t, variant, &len);
+    const float *data = machine_sample_for(e, t, variant, &len);
     e->sample_data[t] = data;
     e->sample_len[t] = len;
     e->sample_missing[t] = data ? 0 : 1;
-
-    int st = pitch_clamp(e->pitch[t]);
-    if (!data || len <= 0 || st == 0) return;
-    kit_pitch_init();
-    int plen = 0;
-    const float *p = pitch_cache_get(&kit_pitch, key, data, len, st, &plen);
-    if (p && plen > 0) {
-        e->sample_data[t] = p;
-        e->sample_len[t] = plen;
-    }
 }
 
 void machine_init_engine(Engine *e)
@@ -102,10 +89,25 @@ void machine_after_load(Engine *e)
 
 const float *machine_sample_for(Engine *e, int track, int variant, int *len)
 {
-    (void)e;
     if (len) *len = 0;
     if (track < 0 || track >= N_TRACKS) return NULL;
-    return sample_get(track, variant, len);
+    const float *data = sample_get(track, variant, len);
+    if (!e || !data || (len && *len <= 0)) return data;
+
+    /* Auditions and kit changes must sound the way playback will, so this
+     * path applies the transpose exactly like resolve_track does. */
+    int st = pitch_clamp(e->pitch[track]);
+    if (st == 0) return data;
+    kit_pitch_init();
+    char key[64];
+    snprintf(key, sizeof key, "%s:%d", TRACKS[track].id, variant);
+    int plen = 0;
+    const float *p = pitch_cache_get(&kit_pitch, key, data, *len, st, &plen);
+    if (p && plen > 0) {
+        data = p;
+        if (len) *len = plen;
+    }
+    return data;
 }
 
 void machine_default_snapshot(PatternSnapshot *s)

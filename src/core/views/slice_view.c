@@ -1,8 +1,8 @@
-/* Shared slice page: waveform strip, 16 step cells and the two percentages.
+/* Shared slice page: waveform strip and the two percentages. The cut is a
+ * property of the track - every step of the pattern plays that slice.
  *
- * Keys: left/right moves the step cursor, up/down nudges the selected value
- * (0.01 % per tap, accelerating while held), A swaps START/END, X hears the
- * slice, B leaves. A step whose slice is untouched plays the whole sample. */
+ * Keys: left/right or A switches START/END, up/down nudges the selected value
+ * (0.01 % per tap, accelerating while held), X hears the slice, B leaves. */
 #include "slice_view.h"
 #include "engine.h"
 #include "machine.h"
@@ -39,12 +39,10 @@ void rg_wave_build(RgWave *w, const float *data, int len)
     }
 }
 
-void rg_slice_ui_open(SliceUi *ui, int step)
+void rg_slice_ui_open(SliceUi *ui)
 {
     if (!ui) return;
-    if (step < 0) step = 0;
-    if (step >= N_STEPS) step = N_STEPS - 1;
-    ui->step = step;
+    ui->handle = 0;
     ui->repeat = 0;
     ui->repeat_dir = -1;
 }
@@ -56,27 +54,18 @@ int rg_slice_page_action(ViewCtx *v, SliceUi *ui, int action)
     if (t < 0 || t >= N_TRACKS) return 0;
 
     Engine *e = v->eng;
-    int len = engine_length_clamp(e->length);
-    if (ui->step < 0) ui->step = 0;
-    if (ui->step >= len) ui->step = len - 1;
     if (ui->handle < 0 || ui->handle > 1) ui->handle = 0;
 
-    int before_step = ui->step;
     int before_handle = ui->handle;
-    int before = ui->handle == 0 ? e->trim_s[t][ui->step] : e->trim_e[t][ui->step];
+    int before = ui->handle == 0 ? e->trim_s[t] : e->trim_e[t];
 
     switch (action) {
     case RGV_LEFT:
-    case RGV_RIGHT: {
-        int dir = action == RGV_RIGHT ? 1 : -1;
-        ui->repeat = ui->repeat_dir == action ? ui->repeat + 1 : 0;
-        ui->repeat_dir = action;
-        int s = ui->step + dir;
-        if (s < 0) s = len - 1;
-        if (s >= len) s = 0;
-        ui->step = s;
+    case RGV_RIGHT:
+    case RGV_OK:
+        ui->handle ^= 1;                /* switch START/END */
+        ui->repeat = 0;
         break;
-    }
     case RGV_UP:
     case RGV_DOWN: {
         int dir = action == RGV_UP ? 1 : -1;
@@ -89,28 +78,23 @@ int rg_slice_page_action(ViewCtx *v, SliceUi *ui, int action)
         int delta = inc[n] * dir;
 
         int lo = 0, hi = 10000;
-        if (ui->handle == 0) hi = (int)e->trim_e[t][ui->step] - 1;
-        else                 lo = (int)e->trim_s[t][ui->step] + 1;
+        if (ui->handle == 0) hi = (int)e->trim_e[t] - 1;
+        else                 lo = (int)e->trim_s[t] + 1;
         if (hi < lo) hi = lo;
 
-        int nv = (int)(ui->handle == 0 ? e->trim_s[t][ui->step]
-                                       : e->trim_e[t][ui->step]) + delta;
+        int nv = (int)(ui->handle == 0 ? e->trim_s[t] : e->trim_e[t]) + delta;
         if (nv < lo) nv = lo;
         if (nv > hi) nv = hi;
-        if (ui->handle == 0) e->trim_s[t][ui->step] = (unsigned short)nv;
-        else                 e->trim_e[t][ui->step] = (unsigned short)nv;
+        if (ui->handle == 0) e->trim_s[t] = (unsigned short)nv;
+        else                 e->trim_e[t] = (unsigned short)nv;
         break;
     }
-    case RGV_OK:
-        ui->handle ^= 1;
-        ui->repeat = 0;
-        break;
     default:
         return 0;
     }
 
-    int after = ui->handle == 0 ? e->trim_s[t][ui->step] : e->trim_e[t][ui->step];
-    return ui->step != before_step || ui->handle != before_handle || after != before;
+    int after = ui->handle == 0 ? e->trim_s[t] : e->trim_e[t];
+    return ui->handle != before_handle || after != before;
 }
 
 /* 564 -> "5.64" */
@@ -128,23 +112,23 @@ void rg_draw_slice_page(const ViewCtx *v, const SliceUi *ui, const RgWave *wave)
     Engine *e = v->eng;
     int t = v->track;
     if (t < 0 || t >= N_TRACKS) t = 0;
-    int len = engine_length_clamp(e->length);
-    int step = ui->step < len ? ui->step : len - 1;
-    int ts = e->trim_s[t][step];
-    int te = e->trim_e[t][step];
+    int ts = e->trim_s[t];
+    int te = e->trim_e[t];
 
-    int px = 20, py = 76, pw = 600, ph = 328;
+    int px = 20, py = 96, pw = 600, ph = 308;
     rg_view_panel(c, px, py, pw, ph, v->panel, v->text);
 
     char buf[96];
-    snprintf(buf, sizeof buf, "SLICE  -  %s  -  STEP %02d", TRACKS[t].name, step + 1);
+    snprintf(buf, sizeof buf, "SLICE  -  %s", TRACKS[t].name);
     cv_text(c, px + 16, py + 10, buf, 1, v->text);
+    cv_text(c, px + pw - cv_text_w("EVERY STEP", 1) - 16, py + 10,
+            "EVERY STEP", 1, v->dim);
     if (e->sample_missing[t])
-        cv_text(c, px + pw - cv_text_w("NO SAMPLE", 1) - 16, py + 10,
-                "NO SAMPLE", 1, v->warn);
+        cv_text(c, px + pw - cv_text_w("NO SAMPLE", 1) - cv_text_w("EVERY STEP", 1) - 32,
+                py + 10, "NO SAMPLE", 1, v->warn);
 
     /* ---- waveform strip ---- */
-    int wx = px + 16, wy = py + 30, ww = pw - 32, wh = 116;
+    int wx = px + 16, wy = py + 40, ww = pw - 32, wh = 150;
     cv_rect(c, wx, wy, ww, wh, 0x141414);
     cv_border(c, wx, wy, ww, wh, 2, v->dim);
     int mid = wy + wh / 2;
@@ -171,36 +155,8 @@ void rg_draw_slice_page(const ViewCtx *v, const SliceUi *ui, const RgWave *wave)
     cv_rect(c, sx, wy + 2, 2, wh - 4, v->led);
     cv_rect(c, ex - 1, wy + 2, 2, wh - 4, v->led);
 
-    /* ---- step cells ---- */
-    const int cell = 30, cgap = 4;
-    int total = N_STEPS * cell + (N_STEPS - 1) * cgap;
-    int cx0 = px + (pw - total) / 2, cy0 = py + 158;
-    for (int s = 0; s < N_STEPS; s++) {
-        int x = cx0 + s * (cell + cgap);
-        int in = s < len;
-        int cs = e->trim_s[t][s], ce = e->trim_e[t][s];
-        int cut = (cs != 0 || ce != 10000);
-        Uint32 fill = !in ? 0x141414 : (cut ? cv_dim(TRACKS[t].color, 0.55f) : 0x242424);
-        cv_rect(c, x, cy0, cell, 26, fill);
-        if (in && cut) {
-            int bx = x + (int)((long long)cell * cs / 10000);
-            int bw = (int)((long long)cell * ce / 10000) - (int)((long long)cell * cs / 10000);
-            if (bw < 1) bw = 1;
-            cv_rect(c, bx, cy0 + 20, bw, 3, TRACKS[t].color);
-        }
-        cv_border(c, x, cy0, cell, 26, 2,
-                  s == step ? v->cursor : (in ? v->dim : 0x2a2a2a));
-        if (s == step) {
-            char d[4];
-            snprintf(d, sizeof d, "%d", s + 1);
-            cv_text(c, x + (cell - cv_text_w(d, 1)) / 2, cy0 + 6, d, 1, v->cursor);
-        } else if (in && (cs != 0 || ce != 10000)) {
-            cv_rect(c, x + cell / 2 - 1, cy0 + 8, 2, 6, cv_dim(TRACKS[t].color, 0.8f));
-        }
-    }
-
     /* ---- values ---- */
-    int vy = py + 198;
+    int vy = py + 216;
     char val[32];
     pct_value(val, sizeof val, ts);
     cv_text(c, px + 40, vy, "START", 1, ui->handle == 0 ? v->led : v->dim);
@@ -227,5 +183,5 @@ void rg_draw_slice_page(const ViewCtx *v, const SliceUi *ui, const RgWave *wave)
     }
 
     cv_text(c, px + 16, py + ph - 18,
-            "LR:STEP  UD:VALUE  A:HANDLE  X:HEAR  B:BACK", 1, v->dim);
+            "LR/A:HANDLE  UD:VALUE  X:HEAR  B:BACK", 1, v->dim);
 }
