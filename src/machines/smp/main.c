@@ -1140,13 +1140,15 @@ static void draw_ui(App *a)
     if (a->mode == MODE_SONG || a->mode == MODE_SONG_ACT ||
         a->mode == MODE_EXPORT_CONFIRM || a->mode == MODE_EXPORT) {
         if (a->song.count > 0) {
-            int bar = (e->song_playing && e->song_bar >= 0 && e->song_bar < a->song.count)
-                      ? e->song_bar : a->song_sel;
+            int bar = (e->song_playing && e->playing && e->song_bar >= 0 &&
+                       e->song_bar < a->song.count)
+                          ? e->song_bar : a->song_sel;
             snprintf(tbuf, sizeof tbuf, "SONG %03d/%03d", bar + 1, a->song.count);
         } else {
             snprintf(tbuf, sizeof tbuf, "SONG 000/000");
         }
-        cv_text(c, 112, 10, tbuf, 1, e->song_playing ? C_LED : C_TEXT);
+        cv_text(c, 112, 10, tbuf, 1,
+                (e->song_playing && e->playing) ? C_LED : C_TEXT);
     } else {
         snprintf(tbuf, sizeof tbuf, "P%03d", a->lib.active_slot);
         cv_text(c, 112, 10, tbuf, 1, C_TEXT);
@@ -5383,6 +5385,23 @@ int main(int argc, char **argv)
             else if (a.midi_saved_bpm) a.eng.bpm_x100 = a.midi_saved_bpm;
             a.eng.ext_clock = midi_on;
         }
+
+        /* Song mode + USB-MIDI: keep the song armed so the master's START
+         * plays the chain instead of the live pattern. A looping song repeats
+         * until STOP; a non-looping one ends in standby and re-arms. */
+        int song_page = (a.mode == MODE_SONG || a.mode == MODE_SONG_ACT) &&
+                        a.song.count > 0;
+        if (midi_on && song_page && !a.eng.song_playing && !a.eng.playing) {
+            int missing = 0;
+            SongSet *set = song_prepare(&a, &missing);
+            if (set) {
+                engine_song_arm(&a.eng, set, a.song.loop);
+                fx_capture(&a.edit_fx, &a.eng);   /* restore after the song stops */
+                a.edit_fx_valid = 1;
+            }
+        }
+        if (a.eng.song_playing && !a.eng.playing && (!midi_on || !song_page))
+            engine_song_disarm(&a.eng);
 
         SDL_Event ev;
         while (SDL_WaitEventTimeout(&ev, 16)) {

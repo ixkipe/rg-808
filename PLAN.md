@@ -451,7 +451,9 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
     tempo editor's left and right now step 0.01 BPM so both decimals stay
     editable; and a tempo-synced delay is bypassed while the clock drives us
     (bit-identical to delay off - covered by `--test-midi`), returning with a
-    cleared line on detach.
+    cleared line on detach. Song mode arms the chain for the transport: MIDI
+    START plays the song instead of the pattern, a looping song repeats until
+    STOP and a non-looping one ends in standby (also `--test-midi`).
   - [x] **Open question RESOLVED (2026-11-27, `logs/usbmidi_probe_5.txt`)**:
     the T-8's MIDI engine gives up when nobody drains its IN endpoint - a
     reader attached after enumeration only finds a couple of stale clock
