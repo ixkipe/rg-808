@@ -212,6 +212,13 @@ void engine_song_start(Engine *e, const SongSet *set, int loop, int start_bar);
 void engine_song_stop(Engine *e);
 void engine_song_set_loop(Engine *e, int loop);
 
+/* Arm the song for the external MIDI transport (song mode + USB-MIDI): the
+ * next START plays the chain, STOP keeps it armed for CONTINUE/restart, and a
+ * non-looping chain ends in standby (song_playing drops, song_done fires).
+ * Disarm returns the transport to the live pattern once playback is idle. */
+void engine_song_arm(Engine *e, const SongSet *set, int loop);
+void engine_song_disarm(Engine *e);
+
 /* External MIDI clock mode (v1.1 P4). Attaching a MidiClock gives the engine
  * its event source; the external-clock switch itself is `ext_clock` - the app
  * turns it on while a device is attached and off on loss, so a missing

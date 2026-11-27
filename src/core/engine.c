@@ -380,6 +380,21 @@ void engine_song_set_loop(Engine *e, int loop)
     e->song_loop = loop ? 1 : 0;
 }
 
+void engine_song_arm(Engine *e, const SongSet *set, int loop)
+{
+    if (!set || set->count <= 0) return;
+    e->song_set = set;
+    e->song_loop = loop ? 1 : 0;
+    e->song_done = 0;
+    e->song_playing = 1;        /* armed: the next START begins the audio */
+}
+
+void engine_song_disarm(Engine *e)
+{
+    if (!e) return;
+    if (!e->playing) e->song_playing = 0;   /* never cut a playing song */
+}
+
 void engine_midi_attach(Engine *e, struct MidiClock *mc)
 {
     if (!e) return;
