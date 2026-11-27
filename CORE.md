@@ -121,6 +121,15 @@ device side of what `tools/device/usbmidi_probe.py` proved on the T-8.
 - **Feed:** 4-byte USB-MIDI event packets are expanded to a MIDI byte stream
   and pushed into `midi_feed()` timestamped on the engine's sample clock
   (a torn 64-bit `total_pos` read on 32-bit builds is clamped).
+- **Song mode + USB-MIDI:** while the app is on the song page (song not
+  empty) the song is **armed** for the external transport (`engine_song_arm`),
+  so the master's START plays the chain instead of the live pattern. A looping
+  song repeats until STOP; a non-looping one runs out and stands by (the song
+  re-arms silently for the next START). STOP keeps the position, CONTINUE
+  resumes, SPP jumps into the chain - all through the same external-clock
+  scheduler the pattern uses. Leaving song mode hands the transport back to
+  the live pattern once playback is idle; the `SONG` header chip lights only
+  while audio actually runs.
 - **App wiring:** both shells create the `MidiClock`, attach it and toggle
   `eng.ext_clock` with `usbmidi_attached()` each frame - master tempo and
   transport while a device is there, internal clock when not. While the clock

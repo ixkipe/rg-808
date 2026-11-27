@@ -464,6 +464,72 @@ int midi_selftest(int rate)
         engine_free(&eb);
     }
 
+    /* ---- song mode arms for the transport: START plays the chain ---- */
+    {
+        static float synth[2000];
+        Engine e;
+        engine_init(&e, rate);
+        engine_midi_attach(&e, &mc);
+        e.ext_clock = 1;
+        midi_init(&mc, rate);
+        fill_synth(&e, synth, 2000);
+        e.lvl[0][0] = LVL_ON;               /* the live pattern must stay silent */
+
+        SongSet *set = calloc(1, sizeof *set);
+        pattern_default_snapshot(&set->pat[0]);
+        set->count = 2;
+        set->pat[0].length = 8;
+        set->pat[0].lvl[1][0] = LVL_ON;
+        set->pat[1].length = 16;
+        set->pat[1].lvl[1][3] = LVL_ON;
+        machine_resolve_snapshot(&set->pat[0]);
+        machine_resolve_snapshot(&set->pat[1]);
+
+        float *buf = malloc(sizeof(float) * 2 * 512);
+        double clk = (double)rate * 60.0 / (120.0 * 24.0);
+        double sps16 = clk * 6.0;
+
+        /* armed: silent until the master starts */
+        engine_song_arm(&e, set, 1);
+        engine_mix(&e, buf, 512);
+        check(e.song_playing == 1 && e.playing == 0,
+              "arming a song does not start playback", &fails);
+
+        unsigned long long next_clock = 100;
+        feed_byte(&mc, 0xFA, 100);          /* START: the chain, not the pattern */
+        run_master(&e, &mc, buf, &next_clock, clk,
+                   (unsigned long long)(100 + sps16 * 2));
+        check(e.song_bar == 0 && e.playing == 1,
+              "MIDI start plays the armed song", &fails);
+
+        /* loop on: the chain wraps until the master stops */
+        run_master(&e, &mc, buf, &next_clock, clk,
+                   (unsigned long long)(100 + sps16 * 24));
+        check(e.song_bar == 1 && e.step == 15 && e.playing == 1,
+              "a looping song keeps cycling under the clock", &fails);
+
+        feed_byte(&mc, 0xFC, e.total_pos + 16);   /* STOP */
+        engine_mix(&e, buf, 512);
+        check(e.playing == 0 && e.song_playing == 1,
+              "MIDI stop halts a looping song but keeps it armed", &fails);
+
+        /* CONTINUE resumes; then the loop runs out and the machine stands by */
+        feed_byte(&mc, 0xFB, e.total_pos);        /* CONTINUE */
+        engine_mix(&e, buf, 512);
+        e.song_loop = 0;                    /* the user turned the loop off */
+        run_master(&e, &mc, buf, &next_clock, clk,
+                   next_clock + (unsigned long long)(clk * 6.0 * 40.0));
+        check(e.playing == 0 && e.song_done == 1,
+              "a non-looping song ends in standby", &fails);
+        engine_mix(&e, buf, 512);
+        check(e.playing == 0, "standby stays silent while the master runs",
+              &fails);
+
+        free(set);
+        free(buf);
+        engine_free(&e);
+    }
+
     /* ---- engine external clock: our song chain stays ours ---- */
     {
         static float synth[2000];
