@@ -77,6 +77,7 @@ typedef struct {
     MidiClock midi;                    /* external MIDI clock (v1.1 P4/P5) */
     UsbMidi usb;                       /* its USB-MIDI device reader */
     int midi_saved_bpm;                /* our tempo, kept across a MIDI sync */
+    int hold_accel;                    /* 3 while a value key is held > 2 s */
     SampleBank live_bank;
     SampleBank song_bank;
     SampleBank preview_bank;
@@ -2657,15 +2658,16 @@ static void act(App *a, int act)
         break;
     case MODE_TEMPO: {
         Engine *en = &a->eng;
+        int acc = a->hold_accel == 3 ? 3 : 1;   /* 3x after 2 s of holding */
         switch (act) {
-        case ACT_TEMPO_UP:   en->bpm_x100 += 500; break;
-        case ACT_TEMPO_DOWN: en->bpm_x100 -= 500; break;
-        case ACT_UP:         en->bpm_x100 += 50;  break;
-        case ACT_DOWN:       en->bpm_x100 -= 50;  break;
-        case ACT_RIGHT:      en->bpm_x100 += 1;   break;   /* 0.01 BPM: both
+        case ACT_TEMPO_UP:   en->bpm_x100 += 500 * acc; break;
+        case ACT_TEMPO_DOWN: en->bpm_x100 -= 500 * acc; break;
+        case ACT_UP:         en->bpm_x100 += 50 * acc;  break;
+        case ACT_DOWN:       en->bpm_x100 -= 50 * acc;  break;
+        case ACT_RIGHT:      en->bpm_x100 += acc;   break;   /* 0.01 BPM: both
                                            decimals stay editable (a MIDI sync
                                            can leave odd centesimal values) */
-        case ACT_LEFT:       en->bpm_x100 -= 1;   break;
+        case ACT_LEFT:       en->bpm_x100 -= acc;   break;
         default: break;
         }
         if (act != ACT_CONFIRM && act != ACT_BACK && act != ACT_MENU &&
@@ -3210,6 +3212,18 @@ static int test_shortcuts_run(App *a)
     CHECK(a->mode == MODE_TEMPO, "L1+Left opens tempo");
     handle_shoulder(a, SH_L1, 0);
     a->sh_suppress = 0;
+
+    /* Tempo page: holding a direction for >2 s triples the step (the repeat
+     * loop sets hold_accel; the handler multiplies the step). */
+    a->mode = MODE_TEMPO;
+    a->hold_accel = 1;
+    int bpm0 = a->eng.bpm_x100;
+    input_dir(a, ACT_UP);
+    CHECK(a->eng.bpm_x100 == bpm0 + 50, "a tempo tap steps 0.5 BPM");
+    a->hold_accel = 3;
+    input_dir(a, ACT_UP);
+    CHECK(a->eng.bpm_x100 == bpm0 + 200, "3x acceleration after 2 s of holding");
+    a->mode = MODE_EDIT;
 
     a->mode = MODE_EDIT;
     handle_shoulder(a, SH_L1, 1);
@@ -4092,6 +4106,7 @@ static int shortcut_face_button(App *a, int face)
 
 static void handle_key(App *a, SDL_Keycode k)
 {
+    a->hold_accel = 1;              /* keyboard taps never accelerate */
     if (shortcut_face_button(a, k == SDLK_c ? RGFACE_X
                              : k == SDLK_x ? RGFACE_B : -1)) return;
     if (punch_enabled(a)) {
@@ -4188,6 +4203,7 @@ static void handle_gc_button(App *a, int button, int down)
         case SDL_CONTROLLER_BUTTON_DPAD_LEFT: case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: {
             int ad = dir_action(button);
             saw_dpad_buttons = 1;
+            a->hold_accel = 1;    /* fresh press: acceleration starts over */
             if (!input_dir(a, ad)) {
                 held_dir = ad; held_since = SDL_GetTicks(); last_auto = held_since;
             } else {
@@ -4205,6 +4221,7 @@ static void handle_gc_button(App *a, int button, int down)
         case SDL_CONTROLLER_BUTTON_DPAD_UP: case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
         case SDL_CONTROLLER_BUTTON_DPAD_LEFT: case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
             if (held_dir == dir_action(button)) held_dir = 0;
+            a->hold_accel = 1;
             punch_release_effect(a, punch_for_dir(dir_action(button)));
             break;
         default: break;
@@ -5452,6 +5469,7 @@ int main(int argc, char **argv)
             a.mode = MODE_VOL;
         if (held_dir && (int)(now - held_since) > 350 && (int)(now - last_auto) > 120) {
             last_auto = now;
+            a.hold_accel = ((int)(now - held_since) > 2000) ? 3 : 1;
             if (input_dir(&a, held_dir)) held_dir = 0;
         }
         /* keep the shoulder-shortcut hint visible while a shoulder is held;

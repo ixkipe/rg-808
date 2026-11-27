@@ -7,11 +7,13 @@ WAV export, a per-pattern master effects chain (selectable drive and
 modulation, tempo-synced delay, reverb), per-track mute and held R1 punch-in
 FX, written in C with SDL2. Runs natively at 640x480.
 
-**RG-808 1.0** — first stable release (2026-11-15). RG-SMP ships as 1.0 from
-the `sampler` branch.
+**RG-808 1.1** (2026-11-27). New in 1.1: USB-MIDI input (clock and transport
+sync, song mode follows the master), per-track pitch with time stretch and
+pattern-wide sample start/end cuts. **RG-808 1.0** was the first stable release
+(2026-11-15); RG-SMP ships as 1.1 from the `sampler` branch.
 
-**RG-SMP 1.0** â€” first stable release (2026-11-15). RG-808 ships as 1.0 from
-the `master` branch.
+**RG-SMP 1.1** (2026-11-27) ships from the `sampler` branch (1.0 was
+2026-11-15).
 
 > **Disclaimer: this project was made with AI.** All of the source code, build
 > and packaging tooling, documentation and planning in this repository were
@@ -55,10 +57,22 @@ semitone, left/right a whole octave, A auditions, B returns; the range is
 put. The interval is saved with the pattern and shown next to the track label
 (+7); each song bar can transpose on its own.
 
-Slice: L1+B opens the start/end page for the selected step. Left/right picks
-the step, up/down nudges the value (hundredths of a percent, coarser while
-held), A swaps START/END, X auditions. Each of the 16 steps can play its own
-cut of the track's sample; the points are stored with the pattern (TRM lines).
+Slice: L1+B opens the start/end page for the selected track. One cut per track
+- every step of the pattern plays it. Left/right or A switches between START
+and END, up/down nudges the value (hundredths of a percent, coarser while
+held), X auditions. The cut is stored with the pattern (`TRM <track> <start>
+<end>`); older per-step `TRM` lines still load and migrate to the first cut
+they contain.
+
+USB-MIDI in (1.1): plug a USB-MIDI master into the Type-C port and the machine
+syncs to it - MIDI clock drives the tempo, START/STOP/CONTINUE drive the
+transport and SPP positions the song. On the song page the armed chain plays
+on the master's START instead of the pattern: a looping song repeats until
+STOP, a non-looping one ends in standby and re-arms for the next START. Your
+own tempo is restored when the device disconnects, and a tempo-synced delay is
+bypassed while the clock drives us. The header shows a red MIDI chip while
+synced. Verified with a Roland T-8; plug the master in while the app runs so
+the reader can claim it.
 
 R1 punch-in FX: hold R1 and press Left/Right/Up/Down for 1/4, 1/8, 1/16 or
 1/32 stutter loops; A = 1/4 rewind, B = 1/16 gate, X = tape stop (one 1/8

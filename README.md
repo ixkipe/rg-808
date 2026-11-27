@@ -6,7 +6,7 @@
 
 ![FX](screenshots/fx.png)
 
-**Version 1.0** â€” first stable release (2026-11-15). RG-808 and RG-SMP both
+**Version 1.1** (2026-11-27). New in 1.1: USB-MIDI input (clock and transport sync, song mode follows the master), per-track pitch with time stretch, and pattern-wide sample start/end cuts. RG-808 and RG-SMP both ship as 1.1, validated on a physical RG35XX SP. RG-808 and RG-SMP both
 ship as 1.0, validated on a physical RG35XX SP.
 
 A 1â€“16-step, 11-track drum machine written in C with SDL2, packaged as a
@@ -55,6 +55,8 @@ rg808.exe --test-fx                     # headless effects checks
 rg808.exe --test-mute                   # headless performance-mute checks
 rg808.exe --test-pitch                  # headless transpose DSP / cache / PIT checks
 rg808.exe --test-trim                   # headless slice math / TRM checks
+rg808.exe --test-midi                   # headless MIDI clock/transport engine
+rg808.exe --test-usbmidi                # headless USB-MIDI input parsing
 rg808.exe --test-punch                  # headless punch-in FX checks
 rg808.exe --screenshot shot.bmp         # render one UI frame to BMP
 rg808.exe --screenshot p.bmp --mode pattern   # pattern browser frame
@@ -122,7 +124,7 @@ cheat sheet for that button. The assigned combinations are:
 | L1 + Up | Pattern length |
 | L1 + Down | Ratchet notes |
 | L1 + X | Pitch / transpose the selected track |
-| L1 + B | Sample start/end (slice) for the selected step |
+| L1 + B | Sample start/end (slice) for the whole track |
 | L2 + Left | Pattern library |
 | L2 + Right | Song mode |
 | L2 + Up | Sample/kit selection |
@@ -146,14 +148,27 @@ with the pattern (`PIT` lines), so every song bar can transpose on its own, and
 the track row shows it next to the label (`+7`). Rendering a long sample takes
 a moment; the transport keeps running while it happens.
 
-**Slice**: L1 + B opens the sample start/end page for the selected step. Each of
-the 16 steps can play its own slice of the track's sample, in hundredths of a
-percent (`START 5.64`, `END 98.74`). Left/right picks the step, up/down nudges
-the highlighted value (0.01 % per tap, coarser while held), A swaps START and
-END, X auditions the slice, B returns. The waveform shows the whole sample with
-the slice lit and both edges marked, and the row of step cells shows which
-steps are cut. Slices are stored with the pattern (`TRM` lines), and the
-sequencer plays the cut with a 2 ms fade at each edge so it never clicks.
+**Slice**: L1 + B opens the sample start/end page for the selected track. One
+cut per track - every step of the pattern plays it - in hundredths of a percent
+(`START 5.64`, `END 98.74`). Left/right or A switches between START and END,
+up/down nudges the highlighted value (0.01 % per tap, coarser while held), A
+also swaps START and END, X auditions the slice, B returns. The waveform shows
+the whole sample with the slice lit and both edges marked. The cut is stored
+with the pattern (`TRM <track> <start> <end>`) and the sequencer plays it with
+a 2 ms fade at each edge so it never clicks. Older per-step `TRM` lines still
+load and migrate to the first cut they contain.
+
+**USB-MIDI in** (1.1): plug a USB-MIDI master into the Type-C port and the
+machine syncs to it - MIDI clock drives the tempo, START/STOP/CONTINUE drive
+the transport, and SPP positions the song. On the song page the armed chain
+plays on the master's START instead of the pattern: a looping song repeats
+until STOP, a non-looping one ends in standby and re-arms for the next START.
+Your own tempo is restored when the device disconnects (the master's measured
+tempo is only borrowed while synced, and the header shows a red `MIDI` chip in
+place of the tempo), and a tempo-synced delay is bypassed while the clock
+drives us. The RG35XX SP acts as a USB host automatically (verified with a
+Roland T-8); the master must be plugged in while the app runs so the reader
+can claim it.
 
 **Mute**: in the sequencer, Y toggles a performance mute for the selected
 instrument; X still auditions it. Muted rows are tinted and marked with a red
@@ -226,7 +241,8 @@ saved/loaded manually. Patterns live in `conf/patterns/NNN.txt`, with slot
 names and the active slot in `conf/patterns/index.txt`; the song chain lives
 in `conf/song.txt` inside the port folder on the card. Pattern files include
 their FX chain, one `PIT <track> <semitones>` line per transposed track and one
-`TRM <track> <16 start> <16 end>` line per sliced track (0.01 % units);
+`TRM <track> <start> <end>` line per cut track (0.01 % units, one cut played by
+every step; legacy per-step lines are migrated);
 `conf/fx.txt` supplies the fallback chain for older patterns without FX lines.
 Writes go to a temp file, are flushed, then renamed into place, so an
 interrupted save never truncates a pattern or song.
@@ -238,7 +254,7 @@ Each voice ships its whole variant family from the pack as `<id>NN.wav`
 the `dflt` column in `src/engine.c`.
 
 ## Status / roadmap
-- **Version 1.0** (2026-11-15): first stable release. M1â€“M11 are implemented;
+- **Version 1.1** (2026-11-27). New in 1.1: USB-MIDI input (clock and transport sync, song mode follows the master), per-track pitch with time stretch, and pattern-wide sample start/end cuts. RG-808 and RG-SMP both ship as 1.1, validated on a physical RG35XX SP. M1â€“M11 are implemented;
   both ARM cross-builds pass the automated suites; controls, audio, effects,
   punch-in FX and song export were validated on a physical RG35XX SP. RG-SMP
   ships as 1.0 from the `sampler` branch.
