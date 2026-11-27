@@ -102,6 +102,17 @@ check(m.USBDEVFS_BULK == ((3 << 30) | (size << 16) | (ord("U") << 8) | 2),
 check(m.USBDEVFS_CLAIMINTERFACE == 0x8004550F, "claim ioctl code")
 check(m.USBDEVFS_SETINTERFACE == 0x80085504, "set-interface ioctl code")
 
+# --- ioctl argument layout --------------------------------------------------
+# A 16-bit packing here made the kernel read interface 65538 and refuse with
+# EINVAL, so the sizes and values are pinned.
+import struct as _struct
+check(len(m.iface_arg(3)) == 4, "claim argument is one unsigned int")
+check(_struct.unpack("I", m.iface_arg(3)) == (3,), "claim argument carries the interface")
+check(len(m.setiface_arg(2, 1)) == 8,
+      "set-interface argument is two unsigned ints")
+check(_struct.unpack("II", m.setiface_arg(2, 1)) == (2, 1),
+      "set-interface argument carries interface and alt")
+
 print("")
 print("failures: %d" % fails)
 sys.exit(1 if fails else 0)
