@@ -2830,6 +2830,26 @@ static int input_dir(App *a, int ad)
     return 0;
 }
 
+/* D-pad press/release shared by every input path (controller buttons, raw
+ * joystick buttons and hats): fires the action once and arms the main-loop
+ * hold-repeat, so holding a direction repeats - and accelerates - on every
+ * device, whichever way the pad reaches us. */
+static void dpad_press(App *a, int ad)
+{
+    a->hold_accel = 1;              /* fresh press: acceleration starts over */
+    if (!input_dir(a, ad)) {
+        held_dir = ad; held_since = SDL_GetTicks(); last_auto = held_since;
+    } else {
+        held_dir = 0;               /* shortcut consumed: no cursor repeat */
+    }
+}
+
+static void dpad_release(App *a, int ad)
+{
+    if (held_dir == ad) held_dir = 0;
+    a->hold_accel = 1;
+}
+
 /* Headless check of the shoulder shortcut map (`--test-shortcuts`). */
 static void handle_trigger_axis(App *a, int sh, int val);
 static void handle_gc_button(App *a, int button, int down);
@@ -3843,12 +3863,7 @@ static void handle_gc_button(App *a, int button, int down)
         case SDL_CONTROLLER_BUTTON_DPAD_LEFT: case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: {
             int ad = dir_action(button);
             saw_dpad_buttons = 1;
-            a->hold_accel = 1;    /* fresh press: acceleration starts over */
-            if (!input_dir(a, ad)) {
-                held_dir = ad; held_since = SDL_GetTicks(); last_auto = held_since;
-            } else {
-                held_dir = 0;         /* shortcut consumed: no cursor repeat */
-            }
+            dpad_press(a, ad);
             break;
         }
         default: break;
@@ -3860,8 +3875,7 @@ static void handle_gc_button(App *a, int button, int down)
             break;
         case SDL_CONTROLLER_BUTTON_DPAD_UP: case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
         case SDL_CONTROLLER_BUTTON_DPAD_LEFT: case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-            if (held_dir == dir_action(button)) held_dir = 0;
-            a->hold_accel = 1;
+            dpad_release(a, dir_action(button));
             punch_release_effect(a, punch_for_dir(dir_action(button)));
             break;
         default: break;
@@ -3885,6 +3899,15 @@ static void handle_joy_button(App *a, int button, int down)
     }
     if (down && shortcut_face_button(a, button == 2 ? RGFACE_X :
             button == 1 ? RGFACE_B : -1)) return;   /* L1 + X / L1 + B */
+
+    /* dpad via raw buttons: press/release with hold-repeat */
+    if (button >= 11 && button <= 14) {
+        int ad = button == 11 ? ACT_UP : button == 12 ? ACT_DOWN
+               : button == 13 ? ACT_LEFT : ACT_RIGHT;
+        if (down) dpad_press(a, ad); else dpad_release(a, ad);
+        return;
+    }
+
     if (!down) {
         if (button == 0) edit_a_up(a);
         return;
@@ -3927,11 +3950,15 @@ static void handle_joy_hat(App *a, int hat, int dir)
         return;
     }
 
-    if (dir == SDL_HAT_CENTERED) return;
-    if (dir & SDL_HAT_UP) input_dir(a, ACT_UP);
-    if (dir & SDL_HAT_DOWN) input_dir(a, ACT_DOWN);
-    if (dir & SDL_HAT_LEFT) input_dir(a, ACT_LEFT);
-    if (dir & SDL_HAT_RIGHT) input_dir(a, ACT_RIGHT);
+    if (dir == SDL_HAT_CENTERED) {
+        held_dir = 0;
+        a->hold_accel = 1;
+        return;
+    }
+    if (dir & SDL_HAT_UP)         dpad_press(a, ACT_UP);
+    else if (dir & SDL_HAT_DOWN)  dpad_press(a, ACT_DOWN);
+    else if (dir & SDL_HAT_LEFT)  dpad_press(a, ACT_LEFT);
+    else if (dir & SDL_HAT_RIGHT) dpad_press(a, ACT_RIGHT);
 }
 
 static void handle_trigger_axis(App *a, int sh, int val)
