@@ -21,6 +21,7 @@ Runs on the stock muOS python3.  No libusb, no compiler, nothing to install.
   python3 usbmidi_probe.py --raw           # dump every packet with a timestamp
   python3 usbmidi_probe.py --timeout 2000  # keep each read armed for 2 s
   python3 usbmidi_probe.py --delay 2       # wait 2 s after claiming, then read
+  python3 usbmidi_probe.py --wait          # start first, then plug the device in
 
 While it listens, start the master's sequencer and also move a knob or press a
 pad: clock proves tempo sync, controller/note traffic proves the pipe is alive
@@ -230,8 +231,22 @@ def audio_stream_alts(ifaces):
     return out
 
 
+def bulk_write(fd, ep, data, timeout_ms):
+    raw = bytes(data)
+    buf = ctypes.create_string_buffer(raw, len(raw))
+    t = _usbdevfs_bulktransfer(ep, len(raw), timeout_ms,
+                               ctypes.cast(buf, ctypes.c_void_p))
+    req = bytearray(ctypes.string_at(ctypes.addressof(t), ctypes.sizeof(t)))
+    try:
+        return fcntl.ioctl(fd, USBDEVFS_BULK, req, True)
+    except OSError as e:
+        if e.errno in (errno.ETIMEDOUT, errno.EAGAIN, errno.EINTR):
+            return 0
+        raise
+
+
 def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
-           audio_alts=()):
+           audio_alts=(), claim_ifaces=()):
     """Claim the interface and read for `seconds`.  Returns a stats dict."""
     st = {"packets": 0, "bytes": 0, "clocks": 0, "events": 0, "bpm": 0.0,
           "error": None}
@@ -281,6 +296,34 @@ def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
             except OSError as e:
                 print("    audio arm failed on if %d alt %d: %s"
                       % (num, alt, e))
+
+        # Claim everything else the device has, the way a driver would.
+        for num in claim_ifaces:
+            if num in claimed:
+                continue
+            try:
+                fcntl.ioctl(fd, USBDEVFS_CLAIMINTERFACE,
+                            bytearray(iface_arg(num)), True)
+                claimed.append(num)
+                print("    interface %d claimed" % num)
+            except OSError as e:
+                print("    interface %d claim failed: %s" % (num, e))
+
+        # Some endpoints stay idle until the host has written to the paired
+        # OUT pipe.  Active Sensing (0xFE) is ignored by every device.
+        if audio_alts or claim_ifaces:
+            for oep in it["eps"]:
+                if (oep["addr"] & 0x80) or (oep["attr"] & 3) != 2:
+                    continue
+                try:
+                    n = bulk_write(fd, oep["addr"], bytes([0x0F, 0xFE, 0x00, 0x00]),
+                                   timeout_ms)
+                    print("    OUT pipe 0x%02x opened (%d bytes)"
+                          % (oep["addr"], n))
+                except OSError as e:
+                    print("    OUT pipe 0x%02x write failed: %s"
+                          % (oep["addr"], e))
+                break
 
         if delay_s > 0:
             time.sleep(delay_s)
@@ -369,6 +412,17 @@ def verdict(st):
     return 0
 
 
+def find_midi_device(want):
+    """(device, candidates) for the first matching USB MIDI device, or None."""
+    for dev in devices():
+        if want and ("%s:%s" % (dev["vid"], dev["pid"])).lower() != want:
+            continue
+        cands = midi_candidates(interfaces(dev))
+        if cands:
+            return dev, cands
+    return None, None
+
+
 def main(argv):
     want = None
     seconds = 30.0
@@ -378,6 +432,7 @@ def main(argv):
     timeout_ms = 200
     delay_s = 0.0
     start_audio = False
+    wait = False
     i = 1
     while i < len(argv):
         a = argv[i]
@@ -389,6 +444,8 @@ def main(argv):
             try_all = True
         elif a == "--start-audio":
             start_audio = True
+        elif a == "--wait":
+            wait = True
         elif a == "--seconds" and i + 1 < len(argv):
             i += 1
             seconds = float(argv[i])
@@ -403,11 +460,23 @@ def main(argv):
         else:
             print("usage: %s [VID:PID] [--list] [--try-all] [--raw] "
                   "[--seconds N] [--timeout MS] [--delay S] [--start-audio]"
-                  % argv[0])
+                  " [--wait]" % argv[0])
             return 2
         i += 1
 
     found = devices()
+    if wait:
+        # Start listening before the device is plugged in: a device that gives
+        # up when nobody drains its small IN buffer can only be caught this way.
+        print("waiting for a USB MIDI device%s - plug it in now"
+              % ("" if not want else " (" + want + ")"))
+        while True:
+            dev, cands = find_midi_device(want)
+            if dev:
+                print("device appeared: %s:%s" % (dev["vid"], dev["pid"]))
+                time.sleep(0.15)          # let enumeration finish
+                break
+            time.sleep(0.2)
     if not found:
         print("no USB devices found in %s" % SYSFS)
         return 1
@@ -420,6 +489,7 @@ def main(argv):
         return 0
 
     audio = []
+    claims = []
     candidates = []
     for dev in found:
         if want and ("%s:%s" % (dev["vid"], dev["pid"])).lower() != want:
@@ -428,6 +498,7 @@ def main(argv):
         if start_audio:
             for a_num, a_alt in audio_stream_alts(ifaces):
                 audio.append((a_num, a_alt))
+            claims = sorted({i["num"] for i in ifaces if i["alt"] == 0})
         for it, ep in midi_candidates(ifaces):
             candidates.append((dev, it, ep))
     if not candidates:
@@ -444,7 +515,7 @@ def main(argv):
             print("\n=== try %s if %d alt %d ep 0x%02x (%s) for %.0fs ===" %
                   (node, it["num"], it["alt"], ep["addr"],
                    KINDS.get(ep["attr"] & 3, "?"), win))
-            st = listen(node, it, ep, win, raw, timeout_ms, delay_s, audio)
+            st = listen(node, it, ep, win, raw, timeout_ms, delay_s, audio, claims)
             if verdict(st) == 0:
                 return 0
             if st["packets"]:
@@ -462,7 +533,7 @@ def main(argv):
            ep["addr"], ep["maxpkt"]))
     print("interface claimed - start the master and move a knob or pad")
 
-    st = listen(node, it, ep, seconds, raw, timeout_ms, delay_s, audio)
+    st = listen(node, it, ep, seconds, raw, timeout_ms, delay_s, audio, claims)
     print("\n=== result ===")
     print("packets %d   bytes %d   clocks %d   transports %d   bpm %.2f" %
           (st["packets"], st["bytes"], st["clocks"], st["events"], st["bpm"]))
