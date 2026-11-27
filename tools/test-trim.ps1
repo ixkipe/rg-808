@@ -32,12 +32,9 @@ Set-Content "$conf\patterns\001.txt" $base
 $env:RG808_CONF = $conf
 & $Exe --pattern 1 --bounce test\trim-full.wav --loops 1 | Out-Null
 
-# Cut the first hit to its first half: 16 zero starts, then step 1 ends at 50 %.
-$starts = @(0) * 16
-$ends = @(10000) * 16
-$ends[0] = 5000
-$trm = "TRM $first " + (($starts + $ends) -join ' ')
-Set-Content "$conf\patterns\001.txt" ($base + $trm)
+# Cut the whole track to its first half: every step plays that slice.
+$base = $base + @("TRM $first 0 5000")
+Set-Content "$conf\patterns\001.txt" $base
 & $Exe --pattern 1 --bounce test\trim-cut.wav --loops 1 | Out-Null
 $env:RG808_CONF = $null
 

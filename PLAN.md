@@ -382,19 +382,25 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
     <label> <16 start> <16 end>` pattern lines in 0.01 % units, written only
     for cut tracks. A cut edge gets a 2 ms fade so an arbitrary point does not
     click, and the step mapping always yields at least one frame.
+    Hardware follow-up: the cut is now **pattern-wide** - one start/end pair
+    per track (`TRM <label> <start> <end>`), played by every step, so
+    programming a slice is a single edit; the legacy per-step lines still
+    load and migrate to the first cut. Pitch remains per track.
   - [x] The slice page (L1+B, `src/core/views/slice_view.c`): waveform strip
-    with the slice highlighted, 16 step cells showing each step's cut, START
-    and END in two-place percentages, frame count and duration. Left/right
-    picks the step, up/down nudges the selected value (0.01 % per tap,
-    accelerating while held), A swaps START/END, X auditions, B returns.
+    with the slice highlighted, START and END in two-place percentages, frame
+    count and duration. Left/right or A switches the handle, up/down nudges
+    the selected value (0.01 % per tap, accelerating while held), X auditions,
+    B returns. (Hardware follow-up: the page lost its per-step cells when the
+    cut became pattern-wide.)
   - [x] The waveform envelope is cached (480 columns) and only rebuilt when the
     sample changes, so drawing the page costs nothing per frame.
-  - [x] Auditioning follows the feature: the sequencer's A/X play the step's
+  - [x] Auditioning follows the feature: the sequencer's A/X play the track's
     slice, and the slice page plays what is being edited.
   - [x] `--test-trim` / `tools/test-trim.ps1`: percentage mapping, clamping and
-    the one-frame floor, slice playback (head vs cut start), the cut end
-    stopping early and fading out, TRM round-trip and partial lines, the page's
-    cursor wrap, handle swap, clamping and acceleration, plus a bounce that
+    the one-frame floor, slice playback (head vs cut start), the cut playing on
+    every step, the cut end stopping early and fading out, TRM round-trip in
+    the new format plus the legacy per-step migration, partial lines, the
+    page's handle switching, clamping and acceleration, plus a bounce that
     differs while keeping its length.
   - [x] L1+B appears in the shared shoulder hint as `B: TRIM`, next to
     `X: PITCH`.
