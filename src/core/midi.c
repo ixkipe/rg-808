@@ -1,5 +1,6 @@
 #include "midi.h"
 #include "engine.h"
+#include "fx.h"
 #include "pattern.h"
 #include "perf_fx.h"
 #include <math.h>
@@ -316,6 +317,7 @@ int midi_selftest(int rate)
         Engine e;
         engine_init(&e, rate);
         engine_midi_attach(&e, &mc);
+        e.ext_clock = 1;                    /* the app toggles this with the device */
         midi_init(&mc, rate);
         fill_synth(&e, synth, 2000);
         e.length = 16;
@@ -390,12 +392,85 @@ int midi_selftest(int rate)
         engine_free(&e);
     }
 
+    /* ---- a synced delay bypasses while the clock drives us ---- */
+    {
+        static float synth[2000];
+        Engine ea, eb;
+        MidiClock ma, mb;
+        engine_init(&ea, rate);
+        engine_init(&eb, rate);
+        midi_init(&ma, rate);
+        midi_init(&mb, rate);
+        engine_midi_attach(&ea, &ma);
+        ea.ext_clock = 1;
+        engine_midi_attach(&eb, &mb);
+        eb.ext_clock = 1;
+        fill_synth(&ea, synth, 2000);
+        fill_synth(&eb, synth, 2000);
+        ea.lvl[0][0] = ea.lvl[0][4] = LVL_ON;
+        eb.lvl[0][0] = eb.lvl[0][4] = LVL_ON;
+
+        /* identical chains; ea's delay is tempo-synced (bypassed under the
+           clock), eb's is off - the reference render */
+        FxSettings fx;
+        fx_defaults(&fx);
+        fx.on = 1;
+        fx.delay_on = 1;
+        fx.delay_sync = 1;
+        fx.delay_div = FX_DIV_4;
+        fx.delay_fb = 40;
+        fx.delay_mix = 50;
+        fx_apply(&ea, &fx);
+        fx.delay_on = 0;
+        fx_apply(&eb, &fx);
+
+        float *buf = malloc(sizeof(float) * 2 * 512);
+        float *ref = malloc(sizeof(float) * 2 * 512);
+        double clk = (double)rate * 60.0 / (120.0 * 24.0);
+        unsigned long long na = 100, nb = 100;
+        feed_byte(&ma, 0xFA, 100);
+        feed_byte(&mb, 0xFA, 100);
+
+        int diff = 0;
+        unsigned long long until = (unsigned long long)(100 + clk * 24.0);
+        while (ea.total_pos < until) {
+            unsigned long long end = ea.total_pos + 512;
+            while (na < end) {
+                feed_byte(&ma, 0xF8, na);
+                na += (unsigned long long)(clk + 0.5);
+            }
+            while (nb < end) {
+                feed_byte(&mb, 0xF8, nb);
+                nb += (unsigned long long)(clk + 0.5);
+            }
+            engine_mix(&ea, buf, 512);
+            engine_mix(&eb, ref, 512);
+            if (memcmp(buf, ref, sizeof(float) * 2 * 512) != 0) diff = 1;
+        }
+        check(ea.delay_bypassed == 1,
+              "a synced delay bypasses under the clock", &fails);
+        check(!diff, "the bypassed synced delay is bit-identical to delay off",
+              &fails);
+
+        /* the delay returns (with a cleared line) when the clock detaches */
+        ea.ext_clock = 0;
+        engine_mix(&ea, buf, 512);
+        check(ea.delay_bypassed == 0,
+              "the synced delay returns when the device detaches", &fails);
+
+        free(buf);
+        free(ref);
+        engine_free(&ea);
+        engine_free(&eb);
+    }
+
     /* ---- engine external clock: our song chain stays ours ---- */
     {
         static float synth[2000];
         Engine e;
         engine_init(&e, rate);
         engine_midi_attach(&e, &mc);
+        e.ext_clock = 1;
         midi_init(&mc, rate);
         fill_synth(&e, synth, 2000);
 

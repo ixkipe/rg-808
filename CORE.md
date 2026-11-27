@@ -11,7 +11,7 @@ RG-808 1.0.
 
 ```
 src/core/          engine, sequencer, patterns, songs, FX, punch-in FX,
-                   MIDI clock, canvas
+                   MIDI clock + USB-MIDI input, canvas
 src/machines/808/  TRACKS table, kit sample families, KIT page, 808 app shell
 src/machines/smp/  track slots, sample bank/browser, SMP app shell
 assets/wav/        tracked 808 kit; sampler/user packs live in ignored subdirs
@@ -101,6 +101,41 @@ and the transport. The device input (usbfs reader) lands with P5 and feeds
 - **Threading:** the input thread pushes timestamped events into an SPSC ring
   (C11 atomics on the indices; clocks never fill the last slots, so a stalled
   consumer cannot bury a START). The audio callback drains it per buffer.
+
+## USB-MIDI device input (v1.1 P5)
+
+`src/core/usbmidi.c` is the app-side half: a Linux usbfs reader that owns the
+device side of what `tools/device/usbmidi_probe.py` proved on the T-8.
+
+- **Reader thread** (pthread, guarded to Linux; other builds are a clean
+  no-op and the app stays on the internal clock): scans
+  `/sys/bus/usb/devices` for any interface with subclass 0x03 (generic class
+  01 and Roland vendor class ff both count), claims it with
+  `USBDEVFS_CLAIMINTERFACE` and drains its bulk IN endpoint with
+  `USBDEVFS_BULK`. Nothing else is claimed - no audio interface, no iso.
+- **Attach window is the whole game:** a master whose IN pipe nobody drains
+  fills its buffer and gives up (the T-8's "two clocks then silence"). The
+  reader polls every 150 ms, so a plug is claimed within a fraction of a
+  second of enumeration; reads time out after 200 ms, so an unplug is noticed
+  and the rescan starts at once.
+- **Feed:** 4-byte USB-MIDI event packets are expanded to a MIDI byte stream
+  and pushed into `midi_feed()` timestamped on the engine's sample clock
+  (a torn 64-bit `total_pos` read on 32-bit builds is clamped).
+- **App wiring:** both shells create the `MidiClock`, attach it and toggle
+  `eng.ext_clock` with `usbmidi_attached()` each frame - master tempo and
+  transport while a device is there, internal clock when not. While the clock
+  drives the engine the header hides our tempo (it carries the master's
+  measured value and shows a red `MIDI` chip instead); the tempo the user had
+  before the sync is restored on detach, and the tempo editor's left/right
+  steps the hundredths (`up/down` = 0.5, `L/R` = 0.01) so any leftover value
+  is reachable. A tempo-synced delay is bypassed outright in external-clock
+  mode - the master's measured tempo wobbles with the lock and so would the
+  delay time; the setting stays and returns (with a cleared line) on detach.
+  Exports never attach a clock.
+- **Checks:** `--test-usbmidi` / `tools/test-usbmidi.ps1` cover descriptor
+  parsing, endpoint selection in both T-8 personalities, packet expansion and
+  the feed-through into the P4 clock; the usbfs reader itself was validated
+  on the device with the probe (`logs/usbmidi_probe_5.txt`).
 
 ## Step levels
 

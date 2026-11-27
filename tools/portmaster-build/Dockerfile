@@ -17,4 +17,6 @@ WORKDIR /src
 COPY build.sh /build.sh
 RUN chmod +x /build.sh
 ENV MACHINE=smp
-CMD ["/build.sh"]
+# Prefer the script from the mounted repo so build.sh edits do not need an
+# image rebuild; the baked copy is a fallback for mounts without it.
+CMD ["bash", "-c", "if [ -f /src/tools/portmaster-build/build.sh ]; then exec bash /src/tools/portmaster-build/build.sh; else exec bash /build.sh; fi"]

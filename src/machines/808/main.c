@@ -20,6 +20,7 @@
 #include "song.h"
 #include "fx.h"
 #include "midi.h"
+#include "usbmidi.h"
 #include "perf_fx.h"
 #include "pitch.h"
 #include "views/views.h"
@@ -69,6 +70,9 @@ enum { SH_L1, SH_L2, SH_R1, SH_R2, SH_COUNT };
 typedef struct {
     Engine eng;
     PatternLib lib;
+    MidiClock midi;                   /* external MIDI clock (v1.1 P4/P5) */
+    UsbMidi usb;                      /* its USB-MIDI device reader */
+    int midi_saved_bpm;               /* our tempo, kept across a MIDI sync */
     int mode;
     RgWave wave;                      /* peak envelope for the slice page */
     SliceUi slice;                    /* slice page cursor/handle */
@@ -945,9 +949,14 @@ static void draw_ui(App *a)
         header_len = engine_length_clamp(hsp->length);
     }
 
-    cv_text(c, SCR_W - 230, 10, "TEMPO", 1, C_TEXT_DIM);
-    snprintf(tbuf, sizeof tbuf, "%6.2f", header_bpm / 100.0);
-    cv_text(c, SCR_W - 170, 10, tbuf, 1, C_TEXT);
+    if (e->ext_clock) {
+        /* MIDI mode: the master drives the tempo, so ours stays hidden */
+        cv_text(c, SCR_W - 230, 10, "MIDI", 1, C_LED);
+    } else {
+        cv_text(c, SCR_W - 230, 10, "TEMPO", 1, C_TEXT_DIM);
+        snprintf(tbuf, sizeof tbuf, "%6.2f", header_bpm / 100.0);
+        cv_text(c, SCR_W - 170, 10, tbuf, 1, C_TEXT);
+    }
     if (header_swing > 0)
         snprintf(tbuf, sizeof tbuf, "LEN %02d  SW %d%%", header_len, header_swing);
     else
@@ -2245,10 +2254,12 @@ static void act(App *a, int act)
         switch (act) {
         case ACT_TEMPO_UP:   en->bpm_x100 += 500; break;
         case ACT_TEMPO_DOWN: en->bpm_x100 -= 500; break;
-        case ACT_RIGHT:      en->bpm_x100 += 50;  break;
-        case ACT_LEFT:       en->bpm_x100 -= 50;  break;
-        case ACT_UP:         en->bpm_x100 += 500; break;
-        case ACT_DOWN:       en->bpm_x100 -= 500; break;
+        case ACT_UP:         en->bpm_x100 += 50;  break;
+        case ACT_DOWN:       en->bpm_x100 -= 50;  break;
+        case ACT_RIGHT:      en->bpm_x100 += 1;   break;   /* 0.01 BPM: both
+                                           decimals stay editable (a MIDI sync
+                                           can leave odd centesimal values) */
+        case ACT_LEFT:       en->bpm_x100 -= 1;   break;
         default: break;
         }
         if (act != ACT_CONFIRM && act != ACT_BACK && act != ACT_MENU &&
@@ -4371,6 +4382,81 @@ static int test_trim_run(App *a)
 }
 
 
+/* Headless USB-MIDI input checks (`--test-usbmidi`): descriptor parsing,
+ * endpoint selection in both T-8 personalities, packet expansion and the
+ * feed-through into the P4 clock. No device, no assets. */
+static int test_usbmidi_run(void)
+{
+    int fails = 0;
+#define CHECK(cond, msg) do { \
+    if (cond) printf("PASS: %s\n", msg); \
+    else { printf("FAIL: %s\n", msg); fails++; } \
+} while (0)
+
+    /* T-8 generic mode: control, two audio streaming, MIDI streaming on
+     * if 3 with a bulk IN endpoint. */
+    const unsigned char t8[] = {
+        9, 2, 0, 0, 4, 1, 0, 0x80, 50,
+        9, 4, 0, 0, 0, 0x01, 0x01, 0x00, 0,
+        9, 4, 1, 0, 0, 0x01, 0x02, 0x00, 0,
+        9, 4, 1, 1, 1, 0x01, 0x02, 0x00, 0,
+        7, 5, 0x0d, 0x09, 372 & 0xFF, 372 >> 8, 0,
+        9, 4, 2, 0, 0, 0x01, 0x02, 0x00, 0,
+        9, 4, 2, 1, 1, 0x01, 0x02, 0x00, 0,
+        7, 5, 0x8e, 0x09, 372 & 0xFF, 372 >> 8, 0,
+        9, 4, 3, 0, 2, 0x01, 0x03, 0x00, 0,
+        7, 5, 0x03, 0x02, 64, 0, 0,
+        7, 5, 0x84, 0x02, 64, 0, 0,
+    };
+    UsbMidiIface ifs[USBMIDI_MAX_IF];
+    int n = usbmidi_parse_config(t8, (int)sizeof t8, ifs, USBMIDI_MAX_IF);
+    CHECK(n == 6, "generic T-8 config parses all six altsettings");
+    int alt = -1, ep = 0, mp = 0;
+    int idx = usbmidi_pick(ifs, n, &alt, &ep, &mp);
+    CHECK(idx >= 0 && ifs[idx].num == 3 && alt == 0 &&
+          ep == 0x84 && mp == 64, "picks if 3 alt 0 bulk IN 0x84");
+
+    /* vendor mode: class ff, same layout, plus an interrupt altsetting */
+    const unsigned char t8v[] = {
+        9, 2, 0, 0, 4, 1, 0, 0x80, 50,
+        9, 4, 0, 0, 0, 0xff, 0xff, 0x00, 0,
+        9, 4, 1, 0, 0, 0xff, 0x02, 0x02, 0,
+        9, 4, 3, 0, 2, 0xff, 0x03, 0x00, 0,
+        7, 5, 0x03, 0x02, 512 & 0xFF, 512 >> 8, 0,
+        7, 5, 0x84, 0x02, 512 & 0xFF, 512 >> 8, 0,
+        9, 4, 3, 1, 2, 0xff, 0x03, 0x00, 0,
+        7, 5, 0x03, 0x03, 512 & 0xFF, 512 >> 8, 0,
+        7, 5, 0x85, 0x03, 512 & 0xFF, 512 >> 8, 0,
+    };
+    n = usbmidi_parse_config(t8v, (int)sizeof t8v, ifs, USBMIDI_MAX_IF);
+    idx = usbmidi_pick(ifs, n, &alt, &ep, &mp);
+    CHECK(idx >= 0 && ifs[idx].num == 3 && alt == 0 &&
+          ep == 0x84 && mp == 512, "vendor mode picks bulk alt 0 too");
+
+    /* expansion: clocks, transport, notes */
+    const unsigned char pkt[] = {
+        0x0F, 0xF8, 0x00, 0x00,
+        0x0F, 0xFA, 0x00, 0x00,
+        0x09, 0x90, 0x3C, 0x40,
+    };
+    unsigned char out[32];
+    int m = usbmidi_expand(pkt, (int)sizeof pkt, out, (int)sizeof out);
+    CHECK(m == 5 && out[0] == 0xF8 && out[1] == 0xFA &&
+          out[2] == 0x90 && out[3] == 0x3C && out[4] == 0x40,
+          "USB-MIDI packets expand to a MIDI byte stream");
+
+    /* feed-through: the expanded stream drives the P4 clock */
+    MidiClock mc;
+    midi_init(&mc, 44100);
+    midi_feed(&mc, out, m, 0);
+    CHECK(mc.stat_clock == 1 && mc.stat_start == 1 && mc.stat_note == 1,
+          "the expanded stream feeds the P4 parser");
+
+    return fails ? 1 : 0;
+#undef CHECK
+}
+
+
 /* ---------------------------------------------------------------- bounce */
 
 static int run_bounce(App *a, const char *outpath, int loops)
@@ -4443,6 +4529,7 @@ int main(int argc, char **argv)
     int test_pitch = 0;
     int test_trim = 0;
     int test_midi = 0;
+    int test_usbmidi = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -4468,10 +4555,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--test-pitch")) test_pitch = 1;
         else if (!strcmp(argv[i], "--test-trim")) test_trim = 1;
         else if (!strcmp(argv[i], "--test-midi")) test_midi = 1;
+        else if (!strcmp(argv[i], "--test-usbmidi")) test_usbmidi = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
-                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-pattern] [--test-swing] [--test-levels] [--test-midi]"
+                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-pattern] [--test-swing] [--test-levels] [--test-midi] [--test-usbmidi]"
                    " [--screenshot out.bmp [--mode edit|mute|punch|kit|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|exportconfirm|pitch|slice|vol|l1|l2|r1|r2]]\n");
             return 0;
         }
@@ -4505,6 +4593,13 @@ int main(int argc, char **argv)
     if (test_midi) {
         SDL_free(base);
         int fails = midi_selftest(48000);
+        engine_free(&a.eng);
+        return fails ? 1 : 0;
+    }
+
+    if (test_usbmidi) {
+        SDL_free(base);
+        int fails = test_usbmidi_run();
         engine_free(&a.eng);
         return fails ? 1 : 0;
     }
@@ -4740,8 +4835,27 @@ int main(int argc, char **argv)
         else if (!raw_opened && SDL_JoystickOpen(i)) raw_opened = 1;
     }
 
+    /* USB-MIDI input (v1.1 P5): the reader thread claims the device within a
+     * fraction of a second of enumeration and feeds the P4 clock; the engine
+     * follows the master's tempo and transport while a device is attached
+     * and falls back to the internal clock otherwise. */
+    midi_init(&a.midi, 44100);
+    engine_midi_attach(&a.eng, &a.midi);
+    a.eng.ext_clock = 0;
+    usbmidi_start(&a.usb, &a.midi, &a.eng.total_pos);
+
     /* main loop */
     while (!a.quit) {
+        /* the external clock follows the device: no reader, internal clock.
+         * The user's own tempo is kept across a sync and restored on detach,
+         * since the engine carries the master's measured tempo while synced. */
+        int midi_on = usbmidi_attached(&a.usb);
+        if (midi_on != a.eng.ext_clock) {
+            if (midi_on) a.midi_saved_bpm = a.eng.bpm_x100;
+            else if (a.midi_saved_bpm) a.eng.bpm_x100 = a.midi_saved_bpm;
+            a.eng.ext_clock = midi_on;
+        }
+
         SDL_Event ev;
         while (SDL_WaitEventTimeout(&ev, 16)) {
             switch (ev.type) {
@@ -4822,6 +4936,7 @@ int main(int argc, char **argv)
 
     if (a.dirty) save_current(&a);
     if (a.song_dirty) song_save(&a.song, a.song_path);
+    usbmidi_stop(&a.usb);
     if (a.dev) SDL_CloseAudioDevice(a.dev);
     free(a.song_sets[0]);
     free(a.song_sets[1]);
