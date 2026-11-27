@@ -20,9 +20,10 @@ RG35XX SP. The release adds the v1.1 phases: muted tracks honoured in WAV
 exports (P1), per-track pitch with time stretch (P2), sample start/end cuts
 (P3, made pattern-wide after device feedback), the MIDI engine and USB-MIDI
 device input (P4/P5 - clock/transport sync, song mode follows the master,
-tempo kept across a sync, synced delay bypassed under the clock), and the
-packaging/docs refresh (P6). Both machine packages ship the new binaries and
-screenshots; the core branch carries all shared changes.
+tempo kept across a sync, synced delay bypassed under the clock), 3x tempo
+acceleration on held directions, and the packaging/docs refresh (P6). Both
+machine packages ship the new binaries and screenshots; the core branch
+carries all shared changes.
 
 ## Release 1.0 (2026-11-15)
 
