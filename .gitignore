@@ -25,3 +25,8 @@ dist/
 test-*.wav
 test-*.bmp
 test/
+
+# device logs and python bytecode (probe output can contain local identifiers)
+logs/
+__pycache__/
+*.pyc
