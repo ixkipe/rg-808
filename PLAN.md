@@ -433,6 +433,16 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
   - [ ] App side: the same logic in C (`src/core/usbmidi.c`) feeding
     `midi_feed()` from P4. Rescan on plug - the host stack is rebuilt, so bus
     and device numbers change - and fall back to "NO MIDI DEVICE" cleanly.
+  - [ ] **Open question (2026-11-27)**: with the interface claimed, the T-8
+    delivers exactly two clock packets in one transfer about 1 ms after the
+    claim and then nothing - in both personalities (generic `029d` at full
+    speed, vendor `029e` at high speed) and even while four knobs are turned.
+    The reader is proven (real `0f f8 00 00` packets decode), so the device
+    is not generating MIDI while we listen. Leading hypothesis: the AIRA
+    Compact only runs its engine while the **audio stream** is open. The
+    probe can arm the audio alternate setting without reading audio
+    (`--start-audio`); if clocks then flow, the app only has to claim the
+    audio interface and select its streaming alt, which is cheap.
   - [ ] **Fallback if usbfs is restricted**: `f_midi` gadget through configfs
     (the RG35XX appears as a USB MIDI *device*; a PC bridges the Roland).
     Same app-side code, because the gadget also creates a local rawmidi node.
