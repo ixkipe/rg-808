@@ -10,7 +10,8 @@ RG-808 1.0.
 ## Layout
 
 ```
-src/core/          engine, sequencer, patterns, songs, FX, punch-in FX, canvas
+src/core/          engine, sequencer, patterns, songs, FX, punch-in FX,
+                   MIDI clock, canvas
 src/machines/808/  TRACKS table, kit sample families, KIT page, 808 app shell
 src/machines/smp/  track slots, sample bank/browser, SMP app shell
 assets/wav/        tracked 808 kit; sampler/user packs live in ignored subdirs
@@ -68,6 +69,38 @@ Core-specific checks:
   selecting an empty slot creates a clean pattern and switches to it.
 - `--test-levels` / `tools/test-levels.ps1`: ghost/weak/regular/accent gain
   ordering, the VLV sidecar round-trip, and the hold-A modal state machine.
+- `--test-midi` / `tools/test-midi.ps1`: the MIDI engine (below) driven by a
+  synthetic clock stream, in both shells.
+
+## MIDI clock (v1.1 P4)
+
+`src/core/midi.c` is the engine-first half of MIDI in: a byte-stream parser
+(running status, sysex-safe, system real-time anywhere), a clock -> BPM lock,
+and the transport. The device input (usbfs reader) lands with P5 and feeds
+`midi_feed()`; nothing in the app reads hardware yet.
+
+- **Parser:** channel messages keep running status; `0xF8` clock, `0xFA`
+  start, `0xFB` continue and `0xFC` stop are handled anywhere (also inside
+  sysex dumps and multi-byte messages); `0xF2` song position sets the start
+  position in 16ths (MIDI beats), pending until the next start/continue.
+- **Tempo lock:** the gap between clocks (24 per quarter) is smoothed by 0.25
+  per clock, so the lock tracks the master within a couple of clocks and
+  re-seeds after a stall. The measured `bpm_x100` feeds the engine tempo (FX
+  delay sync, tempo header).
+- **External-clock mode:** `engine_midi_attach()` points the engine at a
+  `MidiClock`. The master then supplies tempo and transport, while **our**
+  pattern length and song chain stay ours: every 6th timing clock is one of
+  our 16th-step boundaries and fires sample-accurately at the clock's
+  timestamp; start/continue position our grid at the pending song position
+  (step = position % length, or walked through the song chain by per-bar
+  lengths); stop keeps the position so continue-without-SPP resumes. Phase
+  keeps counting while stopped, so a local play press against a running
+  master lands on the master's 16ths. Punch-in quantization uses clocked
+  boundaries exactly like the internal clock. Exports (`--bounce`, song WAV)
+  never attach a clock and render on the internal one.
+- **Threading:** the input thread pushes timestamped events into an SPSC ring
+  (C11 atomics on the indices; clocks never fill the last slots, so a stalled
+  consumer cannot bury a START). The audio callback drains it per buffer.
 
 ## Step levels
 
