@@ -30,10 +30,10 @@ case "$MACHINE" in
     ;;
 esac
 
-CORE="src/core/engine.c src/core/canvas.c src/core/wav.c src/core/pitch.c src/core/pattern.c src/core/song.c src/core/fx.c src/core/perf_fx.c src/core/step_ui.c src/core/views/views.c src/core/views/pitch_view.c src/core/views/slice_view.c"
+CORE="src/core/engine.c src/core/midi.c src/core/usbmidi.c src/core/canvas.c src/core/wav.c src/core/pitch.c src/core/pattern.c src/core/song.c src/core/fx.c src/core/perf_fx.c src/core/step_ui.c src/core/views/views.c src/core/views/pitch_view.c src/core/views/slice_view.c"
 SRCS="$CORE $MSRC"
 CFLAGS="-O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Isrc/core -I$MDIR -I/usr/include/SDL2 -DNDEBUG"
-LIBS="-lSDL2 -lm"
+LIBS="-lSDL2 -lm -lpthread"
 
 STAGE="dist/$PORT-staging"
 mkdir -p "$STAGE"
@@ -52,8 +52,15 @@ rm -rf dist/build
 mkdir -p "dist/build/$PORT"
 cp "port/$LAUNCHER" dist/build/
 cp "$STAGE/$PORT".* "dist/build/$PORT/"
-mkdir -p "dist/build/$PORT/assets"
-cp -r assets/wav "dist/build/$PORT/assets/"
+mkdir -p "dist/build/$PORT/assets/wav"
+if [ "$MACHINE" = 808 ]; then
+  # The 808 kit is the flat <fam>NN.wav set. Sampler/user packs live in
+  # untracked subdirs under assets/wav and must not ship in the port zip.
+  find assets/wav -maxdepth 1 -type f -name '*.wav' \
+    -exec cp {} "dist/build/$PORT/assets/wav/" \;
+else
+  cp -r assets/wav "dist/build/$PORT/assets/wav"
+fi
 cp -r "port/$PORT/licenses" "dist/build/$PORT/"
 [ -f "port/$PORT/screenshot.png" ] && cp "port/$PORT/screenshot.png" "dist/build/$PORT/" || true
 cp port/README.md "dist/build/$PORT/"

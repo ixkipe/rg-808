@@ -387,7 +387,6 @@ void engine_midi_attach(Engine *e, struct MidiClock *mc)
 {
     if (!e) return;
     e->midi = mc;
-    e->ext_clock = mc ? 1 : 0;
     e->midi_phase = 0;
 }
 
@@ -582,7 +581,8 @@ static int mix_ext_steps(Engine *e, int frames, int want_punch)
     const SongSet *set = (const SongSet *)e->song_set;
     unsigned long long end = e->total_pos + (unsigned long long)frames;
 
-    /* tempo lock: the master's tempo is ours (FX delay sync, header) */
+    /* tempo lock: the master's measured tempo becomes ours for the header;
+     * a tempo-synced delay is bypassed while the clock drives us (below) */
     if (mc->bpm_x100 > 0) e->bpm_x100 = mc->bpm_x100;
 
     MidiEvent ev;
@@ -785,8 +785,19 @@ static void fx_process(Engine *e, float *dst, int frames, int bpm_x100)
         }
     }
 
-    /* 3. delay: stereo circular buffer, free-running or tempo-synced */
-    if (e->fx.delay_on) {
+    /* 3. delay: stereo circular buffer, free-running or tempo-synced.
+     * While the USB-MIDI clock drives us a synced delay would follow the
+     * master's measured tempo, which wobbles with the lock - so a synced
+     * delay is bypassed outright in external-clock mode. The setting stays
+     * and comes back when the device detaches; the line is cleared once on
+     * the transition so no stale echo resurfaces from before the bypass. */
+    int delay_bypass = e->ext_clock && e->fx.delay_sync;
+    if (delay_bypass && !e->delay_bypassed) {
+        memset(st->delay_buf, 0, sizeof st->delay_buf);
+        st->delay_pos = 0;
+    }
+    e->delay_bypassed = delay_bypass;
+    if (e->fx.delay_on && !delay_bypass) {
         int ms = fx_delay_ms_for(e->fx.delay_sync, e->fx.delay_ms,
                                  e->fx.delay_div, bpm_x100);
         float fb = fx_clampi(e->fx.delay_fb, 0, 90) / 100.0f;

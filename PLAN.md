@@ -408,7 +408,7 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
   - [x] Engine external-clock mode: the master supplies tempo and transport,
     **our** pattern length and song chain stay ours.
   - [x] `--test-midi` drives a synthetic clock stream (no hardware needed).
-- [ ] **P5 - MIDI device input** *(path found: userspace usbfs - see below)*
+- [x] **P5 - MIDI device input** *(path found: userspace usbfs - see below)*
   - [x] **Host mode (2026-11-25, RG35XX SP / muOS)**: the Type-C port
     **can be a USB host**. Plugging a device makes muOS load the host driver
     (`insmod_host_driver`), register the `sunxi-ehci` / `sunxi-ohci` buses and
@@ -434,14 +434,23 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
     transport events and an estimated BPM.
     `tools/device/test_usbmidi_probe.py` checks the descriptor parser and the
     packet expansion offline (in the container).
-  - [ ] App side: the same logic in C (`src/core/usbmidi.c`) feeding
-    `midi_feed()` from P4. Rescan on plug - the host stack is rebuilt, so bus
-    and device numbers change - and fall back to "NO MIDI DEVICE" cleanly.
-    The reader must claim the MIDI interface and drain its bulk IN endpoint
-    within about a second of enumeration (confirmed: the T-8 gives up
-    otherwise), so the rescan has to arm the reader immediately, not just
-    detect the device. No audio claiming is needed.
-  - [ ] **Open question RESOLVED (2026-11-27, `logs/usbmidi_probe_5.txt`)**:
+  - [x] App side: the same logic in C (`src/core/usbmidi.c`) feeding
+    `midi_feed()` from P4. A Linux usbfs reader thread (clean no-op on the
+    PC build) polls `/sys/bus/usb/devices` every 150 ms, claims the MIDI
+    streaming interface the moment the device enumerates - the confirmed
+    ~1 s give-up window makes attaching at plug mandatory - and drains its
+    bulk IN endpoint, expanding 4-byte USB-MIDI packets into the P4 clock.
+    Rescan on loss covers the host stack being rebuilt (bus and device
+    numbers change); with no device the app falls back to the internal clock
+    cleanly and the header drops the MIDI chip. No audio claiming needed.
+    Device-validated follow-ups: the tempo the user had before a sync is
+    restored on detach (the engine carries the master's measured tempo while
+    synced, and the header hides it behind a MIDI chip in that mode); the
+    tempo editor's left and right now step 0.01 BPM so both decimals stay
+    editable; and a tempo-synced delay is bypassed while the clock drives us
+    (bit-identical to delay off - covered by `--test-midi`), returning with a
+    cleared line on detach.
+  - [x] **Open question RESOLVED (2026-11-27, `logs/usbmidi_probe_5.txt`)**:
     the T-8's MIDI engine gives up when nobody drains its IN endpoint - a
     reader attached after enumeration only finds a couple of stale clock
     events (the "two clocks then silence" signature of the first six runs).
@@ -457,9 +466,11 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
     struct (0x8038550A), not an int (ENOTTY) - and was silent besides; the
     fixed probe can re-run it, but nothing in the logs suggests the app needs
     audio claiming for MIDI.
-  - [ ] **Fallback if usbfs is restricted**: `f_midi` gadget through configfs
+  - [x] **Fallback if usbfs is restricted**: `f_midi` gadget through configfs
     (the RG35XX appears as a USB MIDI *device*; a PC bridges the Roland).
     Same app-side code, because the gadget also creates a local rawmidi node.
+    Not needed: usbfs works on the stock kernel, the app claims the interface
+    directly.
 - [ ] **P6 - Release 1.1**
   - [ ] Docs (README / CORE / PLAN / SAMPLER), `port.json`, screenshots, both
     machine packages, device smoke test.
