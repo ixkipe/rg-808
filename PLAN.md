@@ -408,39 +408,38 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
   - [ ] Engine external-clock mode: the master supplies tempo and transport,
     **our** pattern length and song chain stay ours.
   - [ ] `--test-midi` drives a synthetic clock stream (no hardware needed).
-- [ ] **P5 - MIDI device input** *(blocked on the device kernel - see below)*
-  - [x] **Device probe (2026-11-25, RG35XX SP / muOS)**: the Type-C port
+- [ ] **P5 - MIDI device input** *(path found: userspace usbfs - see below)*
+  - [x] **Host mode (2026-11-25, RG35XX SP / muOS)**: the Type-C port
     **can be a USB host**. Plugging a device makes muOS load the host driver
     (`insmod_host_driver`), register the `sunxi-ehci` / `sunxi-ohci` buses and
-    enumerate it (seen: a USB audio DAC, full speed, bus 8). Unplugging tears
-    the host stack down again, so the role switch is automatic and the
-    launcher needs no preparation.
-  - [ ] **Chosen chain**: Roland S-1 / T-8 **USB-C <-> USB-C** to the
-    Anbernic - the Roland as a class-compliant USB MIDI device, the Anbernic
-    as host. One cable, no adapter, no MIDI Type A pinout to get wrong.
-    (The USB-C -> 3.5 mm Type-A idea is dropped: the adapter probed is an
-    AB13X **USB audio DAC**, not a MIDI interface, so it can never carry
-    MIDI.)
-  - [ ] **Blocker found while probing**: the kernel has no USB audio/MIDI
-    class driver. The AB13X enumerates and binds HID, but no ALSA card
-    appears - `/proc/asound/cards` keeps its three built-in cards and
-    `/dev/snd/` gains no `midiC*`. There is therefore no rawmidi node to
-    read, whatever the cable. This is a kernel capability
-    (`CONFIG_SND_USB_AUDIO`), not an app or cabling problem.
-  - [ ] **Decision**: keep the MIDI engine independent of the transport (P4)
-    and prove it on the PC with a synthetic stream; wire the device reader
-    only against a kernel that exposes a rawmidi node. Re-check after a muOS
-    update with `ls /sys/module | grep -i snd` and
-    `zcat /proc/config.gz | grep SND_USB`, or with a USB-C <-> USB-C **data**
-    cable on a build that has the driver (the user has charging-only cables
-    for now).
-  - [ ] **Fallback if the kernel never gains it**: `f_midi` gadget through
-    configfs - the RG35XX appears as a USB MIDI *device* and a PC bridges
-    the Roland. Same app-side code, because the gadget also creates a local
-    rawmidi node.
-  - [ ] Reader thread on `/dev/snd/midiC*D0` - rescan on plug, since the host
-    stack is rebuilt and card/node numbers change - MIDI SYNC page, clock
-    badge.
+    enumerate it; unplugging tears the host stack down again, so the role
+    switch is automatic and the launcher needs no preparation.
+  - [x] **Chain (2026-11-27)**: a Roland T-8 over a plain USB-C <-> USB-C
+    cable enumerates as `0582:029d  T-8` with four class-1 interfaces - audio
+    control, two audio streaming and **MIDI streaming (sub 03) on
+    `8-1:1.3`** - and **no driver bound to any of them**.
+  - [x] **The kernel has no `snd-usb-audio`**: no ALSA card is created and
+    `/dev/snd/` gains no `midiC*`, so the classic rawmidi route is closed.
+    (The USB-C -> 3.5 mm Type-A idea is dropped too: the adapter probed is an
+    AB13X **USB audio DAC**, not a MIDI interface.)
+  - [x] **Therefore: a userspace USB-MIDI reader over usbfs**, which needs no
+    kernel change. With nothing bound, the interface is free to claim: parse
+    `/sys/bus/usb/devices/<dev>/descriptors` for the MIDI streaming interface
+    and its bulk IN endpoint, open `/dev/bus/usb/<bus>/<dev>`,
+    `USBDEVFS_CLAIMINTERFACE`, then `USBDEVFS_BULK` reads and expand the
+    4-byte USB-MIDI packets into a byte stream.
+  - [x] `tools/device/usbmidi_probe.py` proves it on the device with the stock
+    python3 - no build, no libusb: it lists devices and interfaces, claims the
+    MIDI interface, prints the first packets, and reports clock count,
+    transport events and an estimated BPM.
+    `tools/device/test_usbmidi_probe.py` checks the descriptor parser and the
+    packet expansion offline (in the container).
+  - [ ] App side: the same logic in C (`src/core/usbmidi.c`) feeding
+    `midi_feed()` from P4. Rescan on plug - the host stack is rebuilt, so bus
+    and device numbers change - and fall back to "NO MIDI DEVICE" cleanly.
+  - [ ] **Fallback if usbfs is restricted**: `f_midi` gadget through configfs
+    (the RG35XX appears as a USB MIDI *device*; a PC bridges the Roland).
+    Same app-side code, because the gadget also creates a local rawmidi node.
 - [ ] **P6 - Release 1.1**
   - [ ] Docs (README / CORE / PLAN / SAMPLER), `port.json`, screenshots, both
     machine packages, device smoke test.
