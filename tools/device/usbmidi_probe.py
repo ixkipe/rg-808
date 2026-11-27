@@ -31,6 +31,7 @@ import ctypes
 import errno
 import fcntl
 import os
+import struct
 import sys
 import time
 
@@ -213,15 +214,19 @@ def packets_to_bytes(pkt):
     return bytes(out)
 
 
-def audio_in_alts(ifaces):
-    """(interface, alt) pairs that carry a device -> host audio stream."""
+def audio_stream_alts(ifaces):
+    """(interface, alt) pairs for every audio streaming setting.
+
+    Both directions are armed, because that is what a host that opened the
+    device looks like: the playback stream towards the device and the capture
+    stream back.
+    """
     out = []
     for it in ifaces:
-        if it["sub"] != 2:
+        if it["sub"] != 2 or it["alt"] == 0:
             continue
-        for ep in it["eps"]:
-            if (ep["addr"] & 0x80) and (ep["attr"] & 3) == 1:
-                out.append((it["num"], it["alt"]))
+        if any((ep["attr"] & 3) == 1 for ep in it["eps"]):
+            out.append((it["num"], it["alt"]))
     return out
 
 
@@ -255,7 +260,7 @@ def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
 
     try:
         if it["alt"] != 0:
-            alt = bytearray(iface_arg(it["num"], it["alt"]))
+            alt = bytearray(setiface_arg(it["num"], it["alt"]))
             try:
                 fcntl.ioctl(fd, USBDEVFS_SETINTERFACE, alt, True)
             except OSError as e:
@@ -271,7 +276,7 @@ def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
                                 bytearray(iface_arg(num)), True)
                     claimed.append(num)
                 fcntl.ioctl(fd, USBDEVFS_SETINTERFACE,
-                            bytearray(iface_arg(num, alt)), True)
+                            bytearray(setiface_arg(num, alt)), True)
                 print("    audio stream armed: interface %d alt %d" % (num, alt))
             except OSError as e:
                 print("    audio arm failed on if %d alt %d: %s"
@@ -339,11 +344,14 @@ def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
     return st
 
 
-def iface_arg(num, alt=None):
-    if alt is None:
-        return bytes([num & 0xFF, (num >> 8) & 0xFF, 0, 0])
-    return bytes([num & 0xFF, (num >> 8) & 0xFF,
-                  alt & 0xFF, (alt >> 8) & 0xFF])
+def iface_arg(num):
+    """Claim/release take a single unsigned int (the interface number)."""
+    return struct.pack("I", num)
+
+
+def setiface_arg(num, alt):
+    """usbdevfs_setinterface is two unsigned ints, not two shorts."""
+    return struct.pack("II", num, alt)
 
 
 def verdict(st):
@@ -418,7 +426,7 @@ def main(argv):
             continue
         ifaces = interfaces(dev)
         if start_audio:
-            for a_num, a_alt in audio_in_alts(ifaces):
+            for a_num, a_alt in audio_stream_alts(ifaces):
                 audio.append((a_num, a_alt))
         for it, ep in midi_candidates(ifaces):
             candidates.append((dev, it, ep))
