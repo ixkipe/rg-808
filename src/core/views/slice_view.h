@@ -1,4 +1,5 @@
-/* Slice page (L1+B): per-step sample start/end, in 0.01 % steps. */
+/* Slice page (L1+B): one sample start/end cut per track, in 0.01 % steps -
+ * every step of the track plays that slice. */
 #ifndef RG808_SLICE_VIEW_H
 #define RG808_SLICE_VIEW_H
 
@@ -18,19 +19,18 @@ typedef struct RgWave {
 
 void rg_wave_build(RgWave *w, const float *data, int len);
 
-/* Page state kept by the shell so the handle and the cursor survive a
+/* Page state kept by the shell so the handle and the acceleration survive a
  * close/reopen. */
 typedef struct SliceUi {
-    int step;              /* 0-based cursor step */
     int handle;            /* 0 = start, 1 = end */
     int repeat;            /* consecutive same-direction calls (acceleration) */
     int repeat_dir;        /* RGV_* of the last value action */
 } SliceUi;
 
-void rg_slice_ui_open(SliceUi *ui, int step);
+void rg_slice_ui_open(SliceUi *ui);
 
-/* Applies one action. Returns 1 when the page wants a re-audition (the step,
- * the handle or the value changed). */
+/* Applies one action. Returns 1 when the page wants a re-audition (the
+ * handle or the value changed). */
 int rg_slice_page_action(ViewCtx *v, SliceUi *ui, int action);
 
 void rg_draw_slice_page(const ViewCtx *v, const SliceUi *ui, const RgWave *wave);
