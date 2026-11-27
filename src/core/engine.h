@@ -139,6 +139,12 @@ typedef struct Engine {
     volatile int song_start_bar;           /* first bar after restart (0-based) */
     volatile const SongSet *song_set;      /* prepared snapshot set */
 
+    /* External MIDI clock (v1.1 P4): the master supplies tempo and transport;
+     * our pattern length and song chain stay ours. The app owns the MidiClock
+     * (src/core/midi.h), feeds it incoming bytes and attaches it here. */
+    volatile int ext_clock;                /* follow the attached clock when set */
+    volatile struct MidiClock *midi;       /* NULL = internal clock */
+
     /* audio thread -> UI thread */
     volatile int cur_step;                 /* -1 when stopped */
     volatile int play_step;                /* grid LED; follows swing delay */
@@ -152,6 +158,8 @@ typedef struct Engine {
     unsigned long long step_fire_at;       /* frame of the current audible step */
     int step_prev;                         /* step shown before the swung hit */
     int step;
+    int midi_phase;                        /* 0..5: timing clocks since the last 16th */
+    int delay_bypassed;                    /* synced delay off in external-clock mode */
     Voice voices[MAX_VOICES];
     unsigned long long voice_fire[MAX_VOICES]; /* for stealing */
     struct FxState *fx_state;              /* heap-allocated effect buffers/state */
@@ -201,5 +209,11 @@ int engine_punch_pending(const Engine *e);        /* waiting effect or -1 */
 void engine_song_start(Engine *e, const SongSet *set, int loop, int start_bar);
 void engine_song_stop(Engine *e);
 void engine_song_set_loop(Engine *e, int loop);
+
+/* External MIDI clock mode (v1.1 P4). Attaching a MidiClock gives the engine
+ * its event source; the external-clock switch itself is `ext_clock` - the app
+ * turns it on while a device is attached and off on loss, so a missing
+ * device falls back to the internal clock. Tests may set ext_clock directly. */
+void engine_midi_attach(Engine *e, struct MidiClock *mc);
 
 #endif

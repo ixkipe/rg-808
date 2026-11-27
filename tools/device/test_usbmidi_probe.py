@@ -102,6 +102,40 @@ check(m.USBDEVFS_BULK == ((3 << 30) | (size << 16) | (ord("U") << 8) | 2),
 check(m.USBDEVFS_CLAIMINTERFACE == 0x8004550F, "claim ioctl code")
 check(m.USBDEVFS_SETINTERFACE == 0x80085504, "set-interface ioctl code")
 
+# --- iso URB ABI -------------------------------------------------------------
+# The trap: linux/usbdevice_fs.h defines SUBMITURB as
+#   _IOR('U', 10, struct usbdevfs_urb)
+# so the _IOC size field is sizeof(struct usbdevfs_urb) = 56 on 64-bit, NOT 4.
+# Encoded with an int size (0x8004550A) the kernel answers ENOTTY - that was
+# the --iso failure in usbmidi_probe_5.txt.
+urb_size = ctypes.sizeof(m._usbdevfs_urb)
+check(m.USBDEVFS_SUBMITURB == (2 << 30) | (urb_size << 16) | (0x55 << 8) | 10,
+      "submit-urb ioctl code (_IOC size = %d-byte urb)" % urb_size)
+check(m.USBDEVFS_DISCARDURB == 0x0000550B, "discard-urb ioctl code")
+check(m.USBDEVFS_REAPURBNDELAY == 0x4008550D, "reap-urb (no delay) ioctl code")
+check(m.USBDEVFS_URB_ISO_ASAP == 2, "ISO_ASAP urb flag")
+urb = m._usbdevfs_urb
+check(urb_size == 56, "usbdevfs_urb is 56 bytes on this ABI")
+check(urb.buffer.offset == 16 and urb.usercontext.offset == 48,
+      "usbdevfs_urb pointer fields sit where the kernel looks for them")
+check(ctypes.sizeof(m._iso_desc) == 12, "iso packet descriptor is 12 bytes")
+p = m.IsoPump(-1, {"addr": 0x8E, "attr": 0x01, "maxpkt": 372},
+              packets=4, n_urbs=2)
+check(p.maxpkt == 372 and p.packets == 4 and p.n_urbs == 2,
+      "IsoPump sizes follow the endpoint")
+
+# iso endpoints come from the armed altsettings, both directions
+aud = m.parse_config(config([
+    iface(1, 1, 0x01, 0x02, 0x00, [(0x0D, 0x09, 372)]),
+    iface(2, 1, 0x01, 0x02, 0x00, [(0x8E, 0x09, 372)]),
+]))
+eps = m.iso_eps_for(aud, [(1, 1), (2, 1)])
+check(len(eps) == 2
+      and eps[0][0]["num"] == 1 and eps[0][1]["addr"] == 0x0D and eps[0][2]
+      and eps[1][0]["num"] == 2 and eps[1][1]["addr"] == 0x8E and not eps[1][2],
+      "iso endpoints come from the armed altsettings, OUT first")
+check(m.iso_eps_for(aud, []) == [], "no armed alts, no iso endpoints")
+
 # --- ioctl argument layout --------------------------------------------------
 # A 16-bit packing here made the kernel read interface 65538 and refuse with
 # EINVAL, so the sizes and values are pinned.

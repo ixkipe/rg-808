@@ -11,6 +11,8 @@ set_property(CACHE RG_MACHINE PROPERTY STRINGS 808 smp)
 
 set(CORE_SOURCES
     src/core/engine.c
+    src/core/midi.c
+    src/core/usbmidi.c
     src/core/canvas.c
     src/core/wav.c
     src/core/pitch.c
@@ -58,6 +60,9 @@ else()
     pkg_check_modules(SDL2 REQUIRED sdl2)
     target_include_directories(rg808 PRIVATE ${SDL2_INCLUDE_DIRS})
     target_link_libraries(rg808 ${SDL2_LIBRARIES} m)
+    # the USB-MIDI reader thread (src/core/usbmidi.c) is Linux-only
+    find_package(Threads REQUIRED)
+    target_link_libraries(rg808 Threads::Threads)
 endif()
 
 # ship the local sample tree next to the executable for dev

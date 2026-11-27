@@ -1,5 +1,6 @@
 #include "engine.h"
 #include "fx.h"
+#include "midi.h"
 #include "perf_fx.h"
 #include <math.h>
 #include <stdio.h>
@@ -382,6 +383,13 @@ void engine_song_set_loop(Engine *e, int loop)
     e->song_loop = loop ? 1 : 0;
 }
 
+void engine_midi_attach(Engine *e, struct MidiClock *mc)
+{
+    if (!e) return;
+    e->midi = mc;
+    e->midi_phase = 0;
+}
+
 /* Advance the song clock through one buffer. Per-bar BPM/swing come from the
  * immutable snapshot, so pattern changes are gapless at the bar boundary.
  * Returns the sample offset of the first step boundary when a punch-in is
@@ -445,6 +453,197 @@ static int mix_song_steps(Engine *e, int frames, int want_punch)
                            sp->trim_s[t][e->step], sp->trim_e[t][e->step]);
         }
         e->next_step += sps;
+    }
+    return punch_at;
+}
+
+/* ------------------------------------------------------- external MIDI clock */
+
+/* Length of one 16th from the master's measured tempo, falling back to the
+ * internal tempo until enough clocks have arrived to lock. */
+static double ext_sps(const Engine *e)
+{
+    const MidiClock *mc = (const MidiClock *)e->midi;
+    double f = mc ? midi_step_frames(mc, e->rate) : 0.0;
+    if (f > 0.0) return f;
+    return samples_per_step(e);
+}
+
+/* Walk the song chain to 16th `pos`. Bar lengths are the per-pattern lengths,
+ * so the chain stays ours even when the master counts in quarter notes.
+ * Positions the pre-increment step cursor; returns 0 on success, -1 when the
+ * position is past a non-looping chain. */
+static int ext_song_goto(Engine *e, const SongSet *set, int pos)
+{
+    int total = 0;
+    for (int b = 0; b < set->count; b++)
+        total += engine_length_clamp(set->pat[b].length);
+    if (total <= 0) return -1;
+    if (e->song_loop) pos %= total;
+    if (pos < 0) pos = 0;
+    for (int b = 0; b < set->count; b++) {
+        int len = engine_length_clamp(set->pat[b].length);
+        if (pos < len) {
+            e->song_bar = b;
+            e->step = pos - 1;          /* next boundary increments to `pos` */
+            return 0;
+        }
+        pos -= len;
+    }
+    return -1;
+}
+
+/* Fire one live-pattern step at frame `at` (buffer offset). Every 6th timing
+ * clock is one of our 16th boundaries; swing and ratchets apply as usual. */
+static void ext_fire_live(Engine *e, int at)
+{
+    int len = engine_length_clamp(e->length);
+    e->step++;
+    if (e->step >= len) e->step = 0;
+    double sps = ext_sps(e);
+    int swing = swing_delay_pct(e->swing_pct, e->step, sps);
+    e->step_prev = (e->step + len - 1) % len;
+    e->step_fire_at = e->total_pos + (unsigned long long)at +
+                      (unsigned long long)swing;
+    int delay = at + swing;
+    for (int t = 0; t < N_TRACKS; t++) {
+        unsigned char lv = e->lvl[t][e->step];
+        if (lv > LVL_OFF && !e->mute[t])
+            fire_sched(e, t, (const float *)e->sample_data[t], e->sample_len[t],
+                       lvl_gain(lv), delay, e->rch[t][e->step], sps,
+                       e->trim_s[t][e->step], e->trim_e[t][e->step]);
+    }
+    e->next_step = (double)(e->total_pos + (unsigned long long)at) + sps;
+    ((MidiClock *)e->midi)->pos++;
+}
+
+/* Fire one song step: the chain advances through our own per-bar lengths. */
+static void ext_fire_song(Engine *e, int at)
+{
+    const SongSet *set = (const SongSet *)e->song_set;
+    int count = set ? set->count : 0;
+    if (count <= 0) {
+        e->playing = 0;
+        e->song_playing = 0;
+        return;
+    }
+    if (e->song_bar < 0 || e->song_bar >= count) e->song_bar = 0;
+
+    const PatternSnapshot *sp = &set->pat[e->song_bar];
+    int len = engine_length_clamp(sp->length);
+    e->step++;
+    if (e->step >= len) {
+        e->step = 0;
+        e->song_bar++;
+        if (e->song_bar >= count) {
+            if (e->song_loop) {
+                e->song_bar = 0;
+            } else {
+                e->song_bar = count - 1;
+                e->song_playing = 0;
+                e->playing = 0;
+                e->song_done = 1;
+                e->cur_step = -1;
+                return;
+            }
+        }
+        sp = &set->pat[e->song_bar];
+        len = engine_length_clamp(sp->length);
+        fx_apply(e, &sp->fx);
+    }
+
+    double sps = ext_sps(e);
+    int swing = swing_delay_pct(sp->swing_pct, e->step, sps);
+    e->step_prev = (e->step + len - 1) % len;
+    e->step_fire_at = e->total_pos + (unsigned long long)at +
+                      (unsigned long long)swing;
+    int delay = at + swing;
+    for (int t = 0; t < N_TRACKS; t++) {
+        unsigned char lv = sp->lvl[t][e->step];
+        if (lv > LVL_OFF && !e->mute[t])
+            fire_sched(e, t, sp->sample[t], sp->sample_len[t], lvl_gain(lv),
+                       delay, sp->rch[t][e->step], sps,
+                       sp->trim_s[t][e->step], sp->trim_e[t][e->step]);
+    }
+    e->next_step = (double)(e->total_pos + (unsigned long long)at) + sps;
+    ((MidiClock *)e->midi)->pos++;
+}
+
+/* External-clock step scheduling: the master supplies tempo and transport,
+ * our pattern length and song chain stay ours. Drains the MidiClock event
+ * queue; every 6th timing clock is one of our 16th boundaries and fires at
+ * the clock's timestamp. Returns the sample offset of the first boundary in
+ * this buffer when a punch-in waits, or -1. */
+static int mix_ext_steps(Engine *e, int frames, int want_punch)
+{
+    int punch_at = -1;
+    MidiClock *mc = (MidiClock *)e->midi;
+    const SongSet *set = (const SongSet *)e->song_set;
+    unsigned long long end = e->total_pos + (unsigned long long)frames;
+
+    /* tempo lock: the master's measured tempo becomes ours for the header;
+     * a tempo-synced delay is bypassed while the clock drives us (below) */
+    if (mc->bpm_x100 > 0) e->bpm_x100 = mc->bpm_x100;
+
+    MidiEvent ev;
+    while (midi_next_event(mc, end, &ev)) {
+        int at = (int)(ev.at - e->total_pos);
+        if (at < 0) at = 0;
+        if (at > frames) at = frames;
+
+        switch (ev.type) {
+        case MIDI_EV_START:
+        case MIDI_EV_CONTINUE: {
+            int pos = mc->spp_pending;
+            mc->spp_pending = -1;
+            /* START begins at the song position (0 without SPP); CONTINUE
+             * without an SPP resumes where STOP left us. */
+            if (pos < 0 && ev.type == MIDI_EV_START) pos = 0;
+            e->midi_phase = 0;
+            e->playing = 1;
+            e->song_done = 0;
+            e->step_fire_at = e->total_pos + (unsigned long long)at;
+            if (e->song_playing) {
+                if (set && set->count > 0 &&
+                    (pos < 0 || ext_song_goto(e, set, pos) == 0)) {
+                    fx_apply(e, &set->pat[e->song_bar].fx);
+                } else {
+                    e->playing = 0;     /* position past a non-looping chain */
+                }
+            } else if (pos >= 0) {
+                int len = engine_length_clamp(e->length);
+                e->step = (pos % len) - 1;
+            }
+            if (pos >= 0) mc->pos = pos;
+            break;
+        }
+
+        case MIDI_EV_STOP:
+            e->playing = 0;             /* voices ring out, like an internal stop */
+            break;
+
+        case MIDI_EV_CLOCK:
+            /* Phase keeps advancing while we are stopped, so a local play
+             * press against a running master lands on the master's 16ths. */
+            if (e->midi_phase == 0 && e->playing) {
+                if (want_punch && punch_at < 0) punch_at = at;
+                if (e->song_playing) ext_fire_song(e, at);
+                else ext_fire_live(e, at);
+            }
+            e->midi_phase = (e->midi_phase + 1) % 6;
+            break;
+        }
+    }
+
+    if (want_punch && punch_at < 0) {
+        if (!e->playing) {
+            punch_at = 0;               /* stopped: audition immediately */
+        } else {
+            /* the next boundary is predicted inside this buffer but its
+               clock has not arrived yet */
+            double next = e->next_step - (double)e->total_pos;
+            if (next >= 0.0 && next <= (double)frames) punch_at = (int)next;
+        }
     }
     return punch_at;
 }
@@ -586,8 +785,19 @@ static void fx_process(Engine *e, float *dst, int frames, int bpm_x100)
         }
     }
 
-    /* 3. delay: stereo circular buffer, free-running or tempo-synced */
-    if (e->fx.delay_on) {
+    /* 3. delay: stereo circular buffer, free-running or tempo-synced.
+     * While the USB-MIDI clock drives us a synced delay would follow the
+     * master's measured tempo, which wobbles with the lock - so a synced
+     * delay is bypassed outright in external-clock mode. The setting stays
+     * and comes back when the device detaches; the line is cleared once on
+     * the transition so no stale echo resurfaces from before the bypass. */
+    int delay_bypass = e->ext_clock && e->fx.delay_sync;
+    if (delay_bypass && !e->delay_bypassed) {
+        memset(st->delay_buf, 0, sizeof st->delay_buf);
+        st->delay_pos = 0;
+    }
+    e->delay_bypassed = delay_bypass;
+    if (e->fx.delay_on && !delay_bypass) {
         int ms = fx_delay_ms_for(e->fx.delay_sync, e->fx.delay_ms,
                                  e->fx.delay_div, bpm_x100);
         float fb = fx_clampi(e->fx.delay_fb, 0, 90) / 100.0f;
@@ -719,10 +929,15 @@ void engine_mix(Engine *e, float *dst, int frames)
      * but this buffer should stay on one path. */
     int playing = e->playing;
     int song = e->song_playing;
+    int ext = e->ext_clock && e->midi;
     int want_punch = e->perf_fx && perf_fx_pending(e->perf_fx) >= 0;
     int punch_at = -1;
 
-    if (playing) {
+    if (ext) {
+        /* external MIDI clock: the master supplies tempo and transport */
+        punch_at = mix_ext_steps(e, frames, want_punch);
+        e->cur_step = e->playing ? (e->step < 0 ? 0 : e->step) : -1;
+    } else if (playing) {
         if (song) {
             punch_at = mix_song_steps(e, frames, want_punch);
             e->cur_step = e->playing ? (e->step < 0 ? 0 : e->step) : -1;
@@ -788,10 +1003,11 @@ void engine_mix(Engine *e, float *dst, int frames)
     }
 
     /* master effects, before master gain + soft clip. The delay's tempo sync
-     * follows the live tempo or the current song bar's tempo. */
+     * follows the live tempo or the current song bar's tempo — except under
+     * the external clock, where the master's tempo is the truth. */
     int fx_bpm = e->bpm_x100;
     const SongSet *fx_set = (const SongSet *)e->song_set;
-    if (song && fx_set && e->song_bar >= 0 && e->song_bar < fx_set->count)
+    if (song && !ext && fx_set && e->song_bar >= 0 && e->song_bar < fx_set->count)
         fx_bpm = fx_set->pat[e->song_bar].bpm_x100;
     if (e->fx.on)
         fx_process(e, dst, frames, fx_bpm);
