@@ -477,6 +477,7 @@ def main(argv):
                 time.sleep(0.15)          # let enumeration finish
                 break
             time.sleep(0.2)
+        found = devices()                 # re-scan with the device present
     if not found:
         print("no USB devices found in %s" % SYSFS)
         return 1
