@@ -4,8 +4,9 @@ The `core` branch holds the sample-agnostic drum-machine core. Machine
 branches merge it and keep only their machine definition, app shell, assets and
 port packaging.
 
-**Release 1.0 (2026-11-15):** this shared core backs both RG-SMP 1.0 and
-RG-808 1.0.
+**Release 1.1 (2026-11-27):** this shared core backs RG-SMP 1.1 and RG-808 1.1
+(the 1.0 release from 2026-11-15 remains tagged). The 1.1 core adds the MIDI
+engine and USB-MIDI input, per-track pitch and pattern-wide slice cuts.
 
 ## Layout
 

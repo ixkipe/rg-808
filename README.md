@@ -6,14 +6,17 @@
 
 ![FX](screenshots/fx.png)
 
-**Version 1.0** Ã¢â‚¬â€ first stable release (2026-11-15). RG-SMP and RG-808 both
+**Version 1.1** (2026-11-27). New in 1.1: USB-MIDI input (clock and transport sync, song mode follows the master), per-track pitch with time stretch, and pattern-wide sample start/end cuts. RG-SMP and RG-808 both ship as 1.1, validated on a physical RG35XX SP. RG-SMP and RG-808 both
 ship as 1.0, validated on a physical RG35XX SP.
 
 A 1-16-step, 11-track sample drum machine written in C with SDL2, packaged as a
 PortMaster "ready-to-run" port. It has a recursive WAV sample browser, one
 sample per track, per-step accents, sample-accurate sequencing, a 200-slot
 pattern library, song chains with WAV export, a per-pattern master effects
-chain, per-track mute and held R1 punch-in FX.
+chain, per-track mute and held R1 punch-in FX. 1.1 adds per-track pitch with
+time stretch, pattern-wide sample start/end cuts and USB-MIDI input: the
+device syncs to an external sequencer's MIDI clock and transport - including
+song mode, which plays the chain on the master's START.
 
 This is the sampler branch of the project. It shares the sequencer/pattern/
 song/effects/performance stack with the earlier 808 work but uses a different
@@ -71,6 +74,8 @@ rg808.exe --test-sampler                           # sample bank/browser/persist
 rg808.exe --test-mute                              # performance-mute checks
 rg808.exe --test-pitch                             # transpose DSP / cache / PIT lines
 rg808.exe --test-trim                              # slice math / TRM lines
+rg808.exe --test-midi                              # MIDI clock/transport engine
+rg808.exe --test-usbmidi                           # USB-MIDI input parsing
 rg808.exe --test-punch                             # punch-in FX checks
 rg808.exe --test-shortcuts                         # shoulder map
 rg808.exe --test-length                            # pattern-length checks
@@ -138,7 +143,7 @@ hint. The assigned combinations are:
 | L1 + Up | Pattern length |
 | L1 + Down | Ratchet notes |
 | L1 + X | Pitch / transpose the selected track |
-| L1 + B | Sample start/end (slice) for the selected step |
+| L1 + B | Sample start/end (slice) for the whole track |
 | L2 + Left | Pattern library |
 | L2 + Right | Song mode |
 | L2 + Up | Sample browser |
@@ -162,14 +167,26 @@ pattern (`PIT` lines), so every song bar can transpose on its own, and the
 sequencer row shows it next to the track label (`+7`). Rendering a long sample
 takes a moment; the transport keeps running while it happens.
 
-**Slice**: L1+B opens the sample start/end page for the selected step. Each of
-the 16 steps can play its own slice of the track's sample, in hundredths of a
-percent (`START 5.64`, `END 98.74`). Left/right picks the step, up/down nudges
-the highlighted value (0.01 % per tap, coarser while held), A swaps START and
-END, X auditions the slice, B returns. The waveform shows the whole sample with
-the slice lit and both edges marked, and the row of step cells shows which
-steps are cut. Slices are stored with the pattern (`TRM` lines) and the sequencer
-plays the cut, with a 2 ms fade at each cut edge so it never clicks.
+**Slice**: L1+B opens the sample start/end page for the selected track. One cut
+per track - every step of the pattern plays it - in hundredths of a percent
+(`START 5.64`, `END 98.74`). Left/right or A switches between START and END,
+up/down nudges the highlighted value (0.01 % per tap, coarser while held), X
+auditions the slice, B returns. The waveform shows the whole sample with the
+slice lit and both edges marked. The cut is stored with the pattern (`TRM
+<track> <start> <end>`) and playback applies a 2 ms fade at each cut edge so it
+never clicks. Older per-step `TRM` lines still load and migrate to the first
+cut they contain.
+
+**USB-MIDI in** (1.1): plug a USB-MIDI master into the Type-C port and the
+machine syncs to it - MIDI clock drives the tempo, START/STOP/CONTINUE drive
+the transport, and SPP positions the song. On the song page the armed chain
+plays on the master's START instead of the pattern: a looping song repeats
+until STOP, a non-looping one ends in standby and re-arms for the next START.
+Your own tempo is restored when the device disconnects, and a tempo-synced
+delay is bypassed while the clock drives us (its time would wobble with the
+lock). The header shows a red `MIDI` chip while synced. The RG35XX SP acts as
+a USB host automatically (verified with a Roland T-8); the device must be
+plugged in while the app runs so the reader can claim it.
 
 **Sample browser**: menu -> SAMPLE BROWSER or L2+Up. D-pad scrolls, left/right
 pages, A enters a directory or assigns/auditions a WAV to the current track,
@@ -228,11 +245,12 @@ is never overwritten. L2+Down opens the same export after a confirmation page.
 ## Pattern format
 
 Patterns are plain text: `RGSMP1`, `BPM`, `SMP <track> <relative/path.wav>`,
-`PIT <track> <semitones>` for transposed tracks, `TRM <track> <16 start>
-<16 end>` for sliced steps (0.01 % units), 16-character level rows,
-`RCH`, `SWING`, `LEN` and the FX lines. Slots are atomic writes (temp + fsync +
-rename). Paths are relative to `assets/wav`; files that are missing at startup
-are shown with `!` and stay silent.
+`PIT <track> <semitones>` for transposed tracks, `TRM <track> <start> <end>`
+for a cut track (0.01 % units, one cut per track; legacy per-step lines are
+migrated), 16-character level rows, `RCH`, `SWING`, `LEN` and the FX lines.
+Slots are atomic writes (temp + fsync + rename). Paths are relative to
+`assets/wav`; files that are missing at startup are shown with `!` and stay
+silent.
 
 ## Credits & licences
 

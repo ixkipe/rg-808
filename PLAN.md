@@ -5,12 +5,24 @@
 > described in `SAMPLER.md` and `README.md`. `CORE_PLAN.md` and
 > `CLONES_PLAN.md` are not part of the sampler branch's current scope.
 
-**Current version: 1.0** (2026-11-15). M1–M11 are implemented (including the
-M12 shared-core split), both ARM cross-builds pass the automated suites, and
-RG-SMP/RG-808 1.0 were validated on a physical RG35XX SP.
+**Current version: 1.1** (2026-11-27). M1–M11 are implemented (including the
+M12 shared-core split) plus the v1.1 phases P0–P6; both ARM cross-builds pass
+the automated suites, and RG-SMP/RG-808 1.1 were validated on a physical
+RG35XX SP.
 
 Roland TR-808 clone for the Anbernic RG35XX SP (muOS / PortMaster).
 1–16-step sequencer, single pattern, 11 classic voices, per-step accents.
+
+## Release 1.1 (2026-11-27)
+
+RG-SMP and RG-808 ship together as version 1.1, validated on a physical
+RG35XX SP. The release adds the v1.1 phases: muted tracks honoured in WAV
+exports (P1), per-track pitch with time stretch (P2), sample start/end cuts
+(P3, made pattern-wide after device feedback), the MIDI engine and USB-MIDI
+device input (P4/P5 - clock/transport sync, song mode follows the master,
+tempo kept across a sync, synced delay bypassed under the clock), and the
+packaging/docs refresh (P6). Both machine packages ship the new binaries and
+screenshots; the core branch carries all shared changes.
 
 ## Release 1.0 (2026-11-15)
 
@@ -475,12 +487,17 @@ then merge into `master` (RG-808) and `sampler` (RG-SMP).
     Same app-side code, because the gadget also creates a local rawmidi node.
     Not needed: usbfs works on the stock kernel, the app claims the interface
     directly.
-- [ ] **P6 - Release 1.1**
-  - [ ] Docs (README / CORE / PLAN / SAMPLER), `port.json`, screenshots, both
-    machine packages, device smoke test.
+- [x] **P6 - Release 1.1**
+  - [x] Docs (README / CORE / PLAN / SAMPLER), `port.json`, screenshots, both
+    machine packages, device smoke test (hardware-confirmed by the owner:
+    MIDI sync, song mode, slice cuts and pitch all work "like clockwork").
 
-## Current state (as of 2026-11-15)
+## Current state (as of 2026-11-27)
 
+- **Version 1.1:** the v1.1 phases (P0–P6) are complete on `core` and merged
+  into `sampler` (RG-SMP) and `master` (RG-808); both ARM packages are built
+  and MIDI sync, song mode, slice cuts and pitch were validated on a physical
+  RG35XX SP by the owner.
 - **Version 1.0:** M1–M11 implemented, with the M12 shared-core split complete;
   PC and both ARM cross-builds pass the automated suites; controls, audio,
   effects CPU, punch-in FX and song export were validated on a physical RG35XX
