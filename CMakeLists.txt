@@ -11,6 +11,7 @@ set_property(CACHE RG_MACHINE PROPERTY STRINGS 808 smp)
 
 set(CORE_SOURCES
     src/core/engine.c
+    src/core/midi.c
     src/core/canvas.c
     src/core/wav.c
     src/core/pitch.c

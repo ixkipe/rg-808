@@ -21,11 +21,22 @@ Runs on the stock muOS python3.  No libusb, no compiler, nothing to install.
   python3 usbmidi_probe.py --raw           # dump every packet with a timestamp
   python3 usbmidi_probe.py --timeout 2000  # keep each read armed for 2 s
   python3 usbmidi_probe.py --delay 2       # wait 2 s after claiming, then read
+  python3 usbmidi_probe.py --start-audio   # arm the audio altsettings, too
+  python3 usbmidi_probe.py --iso           # real iso audio traffic, not just armed
+  python3 usbmidi_probe.py --poke          # write one active-sensing event to the OUT pipe
   python3 usbmidi_probe.py --wait          # start first, then plug the device in
 
 While it listens, start the master's sequencer and also move a knob or press a
 pad: clock proves tempo sync, controller/note traffic proves the pipe is alive
 even when no clock is being sent.
+
+Confirmed on the T-8 (2026-11-27, logs/usbmidi_probe_5.txt): the reader has to
+be attached when the master enumerates.  A master whose MIDI IN pipe nobody
+drains fills its small endpoint buffer and gives up; any later reader only
+finds a couple of stale events - the classic "two clocks then silence".
+--wait is therefore the default way to probe a new master: arm the reader
+first, plug in, press play at once.  MIDI needs nothing else - no audio
+altsettings, no iso traffic (--start-audio/--iso stay as diagnostics).
 """
 
 import ctypes
@@ -43,6 +54,40 @@ DEVFS = "/dev/bus/usb"
 USBDEVFS_SETINTERFACE = 0x80085504
 USBDEVFS_CLAIMINTERFACE = 0x8004550F
 USBDEVFS_RELEASEINTERFACE = 0x80045510
+
+# usbdevfs_urb + iso streaming.  The SUBMITURB size field is the urb struct
+# (56 bytes on 64-bit), not an int - encoding it as _IOR('U', 10, unsigned int)
+# yields 0x8004550A, which the kernel does not know and answers with ENOTTY
+# (that was the --iso failure in usbmidi_probe_5.txt).
+USBDEVFS_SUBMITURB = 0x8038550A          # _IOR('U', 10, struct usbdevfs_urb)
+USBDEVFS_DISCARDURB = 0x0000550B         # _IO('U', 11)
+USBDEVFS_REAPURBNDELAY = 0x4008550D      # _IOW('U', 13, void *)
+USBDEVFS_URB_ISO_ASAP = 2
+
+
+class _usbdevfs_urb(ctypes.Structure):
+    _fields_ = [
+        ("type", ctypes.c_ubyte),
+        ("endpoint", ctypes.c_ubyte),
+        ("status", ctypes.c_int),
+        ("flags", ctypes.c_uint),
+        ("buffer", ctypes.c_void_p),
+        ("buffer_length", ctypes.c_int),
+        ("actual_length", ctypes.c_int),
+        ("start_frame", ctypes.c_int),
+        ("number_of_packets", ctypes.c_int),   # union with stream_id
+        ("error_count", ctypes.c_int),
+        ("signr", ctypes.c_uint),
+        ("usercontext", ctypes.c_void_p),
+    ]
+
+
+class _iso_desc(ctypes.Structure):
+    _fields_ = [
+        ("effective_length", ctypes.c_uint),
+        ("actual_length", ctypes.c_uint),
+        ("status", ctypes.c_int),
+    ]
 
 
 class _usbdevfs_bulktransfer(ctypes.Structure):
@@ -245,11 +290,106 @@ def bulk_write(fd, ep, data, timeout_ms):
         raise
 
 
+class IsoPump(object):
+    """Keep a ring of iso URBs in flight on one endpoint.
+
+    Selecting the streaming altsetting allocates bus bandwidth but moves no
+    data.  A device that gates its engine on *actually streaming* audio only
+    starts when its endpoints are serviced every frame.  This pushes real
+    iso traffic: silence towards the device, drained IN packets back.  All
+    payloads are discarded; only the bus activity matters.
+    """
+
+    def __init__(self, fd, ep, packets=64, n_urbs=8):
+        self.fd = fd
+        self.ep = ep["addr"]
+        self.maxpkt = max(8, ep["maxpkt"] or 64)
+        self.packets = packets
+        self.n_urbs = n_urbs
+        self.blocks = []
+        self.inflight = []
+
+    def submit_all(self):
+        if ctypes.sizeof(_usbdevfs_urb) != 56:
+            raise OSError("unexpected usbdevfs_urb size (%d)"
+                          % ctypes.sizeof(_usbdevfs_urb))
+        np = self.packets
+        n = self.maxpkt * np
+
+        class Block(ctypes.Structure):
+            _fields_ = [("urb", _usbdevfs_urb), ("descs", _iso_desc * np)]
+
+        for _ in range(self.n_urbs):
+            b = Block()
+            data = ctypes.create_string_buffer(n)
+            b.urb.type = 0                       # USBDEVFS_URB_TYPE_ISO
+            b.urb.endpoint = self.ep
+            b.urb.flags = USBDEVFS_URB_ISO_ASAP
+            b.urb.buffer = ctypes.cast(data, ctypes.c_void_p)
+            b.urb.buffer_length = n
+            b.urb.number_of_packets = np
+            for i in range(np):
+                b.descs[i].effective_length = self.maxpkt
+            addr = ctypes.addressof(b)
+            b.urb.usercontext = ctypes.c_void_p(addr)
+            fcntl.ioctl(self.fd, USBDEVFS_SUBMITURB, addr)
+            self.blocks.append((b, data, addr))
+            self.inflight.append(addr)
+
+    def pump(self):
+        """Reap completed URBs and resubmit them (call between reads)."""
+        slot = ctypes.create_string_buffer(8)
+        while True:
+            try:
+                fcntl.ioctl(self.fd, USBDEVFS_REAPURBNDELAY, slot, True)
+            except OSError as e:
+                if e.errno in (errno.EAGAIN, errno.EINTR):
+                    break
+                return                          # device gone or ep broken
+            addr = ctypes.cast(slot, ctypes.POINTER(ctypes.c_void_p)).contents.value
+            if not addr:
+                break
+            if addr in self.inflight:
+                self.inflight.remove(addr)
+                self.inflight.append(addr)
+            try:
+                fcntl.ioctl(self.fd, USBDEVFS_SUBMITURB, addr)
+            except OSError:
+                return
+
+    def stop(self):
+        for addr in list(self.inflight):
+            try:
+                fcntl.ioctl(self.fd, USBDEVFS_DISCARDURB, addr)
+            except OSError:
+                pass
+        # reap until quiet so the kernel frees everything it can
+        slot = ctypes.create_string_buffer(8)
+        for _ in range(4 * self.n_urbs):
+            try:
+                fcntl.ioctl(self.fd, USBDEVFS_REAPURBNDELAY, slot, True)
+            except OSError:
+                break
+
+
+def iso_eps_for(ifaces, audio_alts):
+    """iso endpoints of the armed audio altsettings: (interface, ep, is_out)."""
+    out = []
+    for num, alt in audio_alts:
+        for it in ifaces:
+            if it["num"] != num or it["alt"] != alt:
+                continue
+            for ep in it["eps"]:
+                if (ep["attr"] & 3) == 1:
+                    out.append((it, ep, (ep["addr"] & 0x80) == 0))
+    return out
+
+
 def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
-           audio_alts=(), claim_ifaces=()):
+           audio_alts=(), claim_ifaces=(), iso_eps=(), poke=False):
     """Claim the interface and read for `seconds`.  Returns a stats dict."""
     st = {"packets": 0, "bytes": 0, "clocks": 0, "events": 0, "bpm": 0.0,
-          "error": None}
+          "age": None, "error": None}
 
     if (ep["attr"] & 3) != 2:
         st["error"] = ("%s endpoint: USBDEVFS_BULK only does bulk transfers; "
@@ -263,6 +403,11 @@ def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
         st["error"] = "cannot open %s: %s" % (node, e)
         return st
 
+    try:
+        st["age"] = time.time() - os.stat(node).st_ctime
+    except OSError:
+        pass
+
     claimed = []
     claim = bytearray(iface_arg(it["num"]))
     try:
@@ -273,6 +418,8 @@ def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
         os.close(fd)
         return st
 
+    pumps = []
+
     try:
         if it["alt"] != 0:
             alt = bytearray(setiface_arg(it["num"], it["alt"]))
@@ -281,9 +428,10 @@ def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
             except OSError as e:
                 st["error"] = "alt %d refused: %s" % (it["alt"], e)
 
-        # Some devices only run their engine while the audio stream is open.
-        # Selecting the streaming alternate setting is enough for the device to
-        # start; nobody has to read the audio itself.
+        # Some devices only run their engine while audio is streaming.  The
+        # 2026-11-27 T-8 logs disprove the weak form: selecting the streaming
+        # altsetting alone is NOT enough.  The strong form (real iso traffic
+        # on the bus) is what --iso below tests.
         for num, alt in audio_alts:
             try:
                 if num not in claimed:
@@ -310,8 +458,9 @@ def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
                 print("    interface %d claim failed: %s" % (num, e))
 
         # Some endpoints stay idle until the host has written to the paired
-        # OUT pipe.  Active Sensing (0xFE) is ignored by every device.
-        if audio_alts or claim_ifaces:
+        # OUT pipe.  Active Sensing (0xFE) is ignored by every device - but it
+        # is an extra variable on the wire, so it only runs with --poke.
+        if poke and (audio_alts or claim_ifaces):
             for oep in it["eps"]:
                 if (oep["addr"] & 0x80) or (oep["attr"] & 3) != 2:
                     continue
@@ -325,6 +474,22 @@ def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
                           % (oep["addr"], e))
                 break
 
+        # An armed altsetting allocates bandwidth but moves no data.  A
+        # device that only runs its engine while audio really streams starts
+        # once its iso endpoints are serviced every frame.
+        for ait, aep, out_dir in iso_eps:
+            try:
+                p = IsoPump(fd, aep)
+                p.submit_all()
+                pumps.append(p)
+                print("    iso stream running: ep 0x%02x %-3s %d urb(s) x "
+                      "%d packet(s) of %d B"
+                      % (aep["addr"], "OUT" if out_dir else "IN",
+                         p.n_urbs, p.packets, p.maxpkt))
+            except OSError as e:
+                print("    iso stream failed on ep 0x%02x: %s"
+                      % (aep["addr"], e))
+
         if delay_s > 0:
             time.sleep(delay_s)
 
@@ -336,6 +501,8 @@ def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
         shown = 0
         try:
             while time.time() - started < seconds:
+                for p in pumps:
+                    p.pump()
                 pkt = bulk_read(fd, ep["addr"], length, timeout_ms)
                 if not pkt:
                     if time.time() >= next_report:
@@ -377,6 +544,11 @@ def listen(node, it, ep, seconds, raw, timeout_ms=200, delay_s=0.0,
         except KeyboardInterrupt:
             print("    interrupted")
     finally:
+        for p in pumps:
+            try:
+                p.stop()
+            except Exception:
+                pass
         try:
             for num in claimed:
                 fcntl.ioctl(fd, USBDEVFS_RELEASEINTERFACE,
@@ -401,12 +573,20 @@ def verdict(st):
     if st["error"]:
         print("  -> %s" % st["error"])
         return 1
+    if st["age"] is not None:
+        print("  (reader attached %.1f s after enumeration)" % st["age"])
     if st["packets"] == 0:
         print("  -> NOTHING RECEIVED: pipe silent")
         return 1
     if st["clocks"] < 8:
         print("  -> DATA but almost no clock (%d): pipe works, clock is not "
               "being sent" % st["clocks"])
+        if 0 < st["clocks"] <= 4 and st["packets"] <= 4:
+            print("     Signature: a few buffered events drained, then silence.")
+            print("     The reader attached after enumeration and the master's")
+            print("     engine gave up with nobody draining its IN pipe.")
+            print("     Retry with --wait: arm the reader FIRST, then plug the")
+            print("     master in and press play at once.")
         return 1
     print("  -> MIDI clock flowing at %.2f BPM" % st["bpm"])
     return 0
@@ -432,6 +612,8 @@ def main(argv):
     timeout_ms = 200
     delay_s = 0.0
     start_audio = False
+    iso = False
+    poke = False
     wait = False
     i = 1
     while i < len(argv):
@@ -444,6 +626,11 @@ def main(argv):
             try_all = True
         elif a == "--start-audio":
             start_audio = True
+        elif a == "--iso":
+            iso = True
+            start_audio = True      # real streaming implies armed altsettings
+        elif a == "--poke":
+            poke = True
         elif a == "--wait":
             wait = True
         elif a == "--seconds" and i + 1 < len(argv):
@@ -460,7 +647,7 @@ def main(argv):
         else:
             print("usage: %s [VID:PID] [--list] [--try-all] [--raw] "
                   "[--seconds N] [--timeout MS] [--delay S] [--start-audio]"
-                  " [--wait]" % argv[0])
+                  " [--iso] [--poke] [--wait]" % argv[0])
             return 2
         i += 1
 
@@ -491,6 +678,7 @@ def main(argv):
 
     audio = []
     claims = []
+    iso_eps = []
     candidates = []
     for dev in found:
         if want and ("%s:%s" % (dev["vid"], dev["pid"])).lower() != want:
@@ -500,11 +688,19 @@ def main(argv):
             for a_num, a_alt in audio_stream_alts(ifaces):
                 audio.append((a_num, a_alt))
             claims = sorted({i["num"] for i in ifaces if i["alt"] == 0})
+            if iso:
+                iso_eps.extend(iso_eps_for(ifaces, audio))
         for it, ep in midi_candidates(ifaces):
             candidates.append((dev, it, ep))
     if not candidates:
         print("\nno USB MIDI interface found%s" %
               ("" if not want else " on " + want))
+        if want:
+            for dev in found:
+                print("note: %s is present as %s:%s - Roland devices can flip"
+                      " personality on reconnect, so drop the VID:PID argument"
+                      " and retry" % (dev["product"] or "device",
+                                      dev["vid"], dev["pid"]))
         return 1
 
     if try_all:
@@ -516,7 +712,8 @@ def main(argv):
             print("\n=== try %s if %d alt %d ep 0x%02x (%s) for %.0fs ===" %
                   (node, it["num"], it["alt"], ep["addr"],
                    KINDS.get(ep["attr"] & 3, "?"), win))
-            st = listen(node, it, ep, win, raw, timeout_ms, delay_s, audio, claims)
+            st = listen(node, it, ep, win, raw, timeout_ms, delay_s, audio,
+                        claims, iso_eps, poke)
             if verdict(st) == 0:
                 return 0
             if st["packets"]:
@@ -534,7 +731,8 @@ def main(argv):
            ep["addr"], ep["maxpkt"]))
     print("interface claimed - start the master and move a knob or pad")
 
-    st = listen(node, it, ep, seconds, raw, timeout_ms, delay_s, audio, claims)
+    st = listen(node, it, ep, seconds, raw, timeout_ms, delay_s, audio,
+                claims, iso_eps, poke)
     print("\n=== result ===")
     print("packets %d   bytes %d   clocks %d   transports %d   bpm %.2f" %
           (st["packets"], st["bytes"], st["clocks"], st["events"], st["bpm"]))

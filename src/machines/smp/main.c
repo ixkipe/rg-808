@@ -23,6 +23,7 @@
 #include "pattern.h"
 #include "song.h"
 #include "fx.h"
+#include "midi.h"
 #include "perf_fx.h"
 #include "pitch.h"
 #include "views/views.h"
@@ -4893,6 +4894,7 @@ int main(int argc, char **argv)
     int test_levels = 0;
     int test_pitch = 0;
     int test_trim = 0;
+    int test_midi = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets_arg = argv[++i];
@@ -4918,10 +4920,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--test-levels")) test_levels = 1;
         else if (!strcmp(argv[i], "--test-pitch")) test_pitch = 1;
         else if (!strcmp(argv[i], "--test-trim")) test_trim = 1;
+        else if (!strcmp(argv[i], "--test-midi")) test_midi = 1;
         else if (!strcmp(argv[i], "--help")) {
             printf("usage: rg808 [--assets DIR] [--pattern N] [--save-slot N]"
                    " [--song [--bounce out.wav]] [--bounce out.wav --loops N]"
-                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-sampler] [--test-pattern] [--test-swing] [--test-levels] [--test-pitch] [--test-trim]"
+                   " [--test-shortcuts] [--test-song] [--test-length] [--test-fx] [--test-mute] [--test-punch] [--test-sampler] [--test-pattern] [--test-swing] [--test-levels] [--test-pitch] [--test-trim] [--test-midi]"
                    " [--screenshot out.bmp [--mode edit|mute|punch|sampler|rch|swing|length|fx|menu|tempo|pattern|song|songact|export|exportconfirm|pitch|slice|vol|l1|l2|r1|r2]]\n");
             return 0;
         }
@@ -4956,6 +4959,13 @@ int main(int argc, char **argv)
         SDL_free(base);
         int fails = engine_selftest_swing(48000);
         if (fails == 0) printf("PASS: swing playhead\n");
+        engine_free(&a.eng);
+        return fails ? 1 : 0;
+    }
+
+    if (test_midi) {
+        SDL_free(base);
+        int fails = midi_selftest(48000);
         engine_free(&a.eng);
         return fails ? 1 : 0;
     }
